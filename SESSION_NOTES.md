@@ -1,0 +1,72 @@
+# Session notes — 2026-10-16
+
+Handoff for the RTL8761CU (ASUS USB-BT600, `0b05:1d70`) work. All hardware
+runs were done by the user from macOS Terminal and pasted back.
+
+## What this session established
+
+### Controller capability map (confirmed on hardware)
+
+| Capability | Opcode | Result |
+| --- | --- | --- |
+| Read local / ROM version | `0x1001` / `0xfc6d` | Works; ROM version 1 (selects patch chip ID 2) |
+| Memory read | `0xfc61` | Works over `0x00001000..0x0009f000` and RAM near `0x0021xxxx`. `0x0` reads zero. `0x000a0000` and `0x0880a0a8` hang the controller (replug to recover). |
+| Firmware download | `0xfc20` | Accepted; controller relaunches (version `0x000e8761` -> `0x7bf15762`). No HCI Reset needed, matching `btrtl.c`. The patch is **relocated/transformed on load** — its prologue bytes are not in any readable region. |
+| Memory write | `0xfc62` | **Works.** read/flip/verify/restore at `0x00210000`: `00 00 00 00` -> wrote `ff ff ff ff` -> read back `ff ff ff ff` -> restored `00 00 00 00`. |
+
+**Bottom line: full RAM read + write, plus a launching firmware-download path.**
+That is the whole low-level foundation; changing the chip's behavior is now an
+RE problem, not a "can we touch it" problem.
+
+### Key corrected assumptions
+- The stock upload reporting `0x7bf15762` (not the container `0x4618d3f3`) is
+  **success, not failure**. `btrtl.c` never verifies the post-download version;
+  it only logs it. The probe now treats "version changed from pre-download" as
+  the success signal (`require_stock_version`).
+- Our 263-byte payload is framed correctly (the patch already ends in the
+  version bytes; substitution is a no-op). The earlier "bad framing" worry was
+  wrong.
+- The `0b05:1d70` USB identity is **not** in any readable region (searched all
+  byte orders across `0x1000..0x9f000`), so it is config/efuse the read path
+  can't reach. BUT the firmware stages the descriptor in RAM at enumeration, and
+  RAM is writable — so changing what the dongle enumerates as is reachable in
+  principle via a RAM write / hook.
+
+### Three-dongle comparison (empirical, `usb_inspect.py`)
+| | BT600 | MD301 (`0b05:1cd3`) | Logi Bolt (`046d:c548`) |
+| --- | --- | --- | --- |
+| USB class | `e0` Bluetooth | HID (5 iface) | HID (4 iface) |
+| endpoint types | interrupt + bulk + **isochronous** | interrupt only (IN+OUT) | interrupt only (IN) |
+| audio lane (isoc) | **yes** | no | no |
+| radio | Bluetooth **Classic** | 2.4 GHz proprietary | BLE proprietary |
+| reflashable | yes (`fc20`) | yes (ASUS GearLink, vendor HID chans `0xffef`/`0xff02`/`0xff01`/`0xffc1`) | no (signed) |
+
+Only the BT600 has a Bluetooth-Classic radio + an isochronous (audio) USB lane.
+The other two are input receivers with no audio path. Logitech Bolt FCC
+`JNZCU0021` (DTS-BT LE + GFSK). MD301 is a capable reflashable HID gadget but
+not part of any audio chain.
+
+## Tools added to the repo this session
+- `usb_inspect.py` — generic USB descriptor + HID report-descriptor dump (any device).
+- `bt600_probe.py` new modes: `--map-memory`, `--find-descriptor`, `--find-patch`,
+  `--write-test`; corrected `--load-stock` success check.
+- Tests: `test_probe.py` (23) + `test_usb_inspect.py` (6) all pass:
+  `python3 -m unittest -v`.
+
+## Strategic read
+- **Dongle-only bridge** (BT600 becomes the whole iPod/iAP + audio device):
+  now plausible at the memory level (read+write+load all work) but still needs
+  (a) locating/patching the descriptor staging in RAM, (b) an A2DP sink + iAP
+  stack on a small BT-controller ROM — the capacity question is the real risk.
+- **Radio + host** (BT600 as the Bluetooth radio, a small cheap board as the
+  car-facing USB/iAP persona): the lower-risk path to actually shipping audio to
+  the car. The car has no CarPlay, so the persona is iPod/iAP, which is
+  MFi-licensed for a *product* but fine for a personal build.
+
+## Exact next experiment
+Find where the firmware stages the USB **device descriptor** in RAM during
+enumeration — that is the specific `fc62` write target that would let the dongle
+present as something the car accepts. Approach: dump/compare RAM around
+enumeration, or search RAM (read) for the assembled 18-byte device-descriptor
+pattern (`12 01 00 02 e0 01 01 ...`) rather than just the VID/PID, in all byte
+orders, across the readable RAM region.
