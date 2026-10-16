@@ -1,5 +1,13 @@
 # Dart USB — ASUS USB-BT600 / RTL8761C research
 
+Current continuation: the next hardware command is
+`python3 bt600_vendor_read.py --descriptor-targets` from normal macOS Terminal.
+It saves `results/bt600-targets-*.json` and compares a bounded ASUS-derived
+memory candidate with standard GET_DESCRIPTOR. Read [CLAUDE.md](CLAUDE.md) and
+[FIRMWARE.md](FIRMWARE.md#full-asus-rtbtcore-image--2026-10-16-continuation) first;
+the completed RAM/write/stock-upload experiments do not need repeating.
+
+
 Open-source tools and hardware research toward a **standalone Bluetooth-to-USB/iPod audio bridge**, using an ASUS USB-BT600 and a 2016 Dodge Dart with the stock 8.4-inch Uconnect system.
 
 The intended path is an iPhone sending wireless audio and track metadata to the dongle, with the dongle presenting the USB audio/iPod interface expected by the car. Making this work requires firmware execution, USB device behavior, Bluetooth audio and metadata handling, and a startup path that survives power loss.

@@ -1,5 +1,52 @@
 # Session notes — 2026-10-16
 
+## Codex continuation: ASUS descriptor targets and EP0 copy
+
+Continued from the 2026-10-16 ZIP handoff on focused branch
+`codex/bt600-descriptor-targets`, based on PR #3 head
+`00623ad7efd399a9d8ed2cd690b8ffca183c31e8`. The remote draft was still open
+at that head; `origin/main` is already included. Earlier local checkouts and the
+original handoff ZIP were left intact.
+
+Integrated `bt600_vendor_read.py` from the handoff. Added same-session standard
+GET_DESCRIPTOR comparison, strict query lengths and ROM gating, first-timeout
+abort, failed-address/partial-result preservation (including Ctrl-C), probe
+source hash, and nonzero exit on cleanup failure. Memory scope is unchanged:
+at most seven words, no reset/upload/write/detach. The two firmware-derived
+addresses remain `0x002c10b4` and `0x002808b8`.
+
+Added `analyze_asus_firmware.py` for hash-pinned, bounded extraction. Reproduced
+the seven ECO-2 image records and payload hash from the original ASUS bytes;
+compiled the extracted Thumb wrapper and regenerated disassembly using Apple's
+Command Line Tools. No firmware binaries are tracked. FIRMWARE.md records the
+source, selection and upgrade distinction, address arithmetic, and new EP0 trace.
+
+New offline finding: the candidate descriptor pointer supplies a template.
+Binding copies it into composite state `C + 0x0c`; GET_DESCRIPTOR serves that
+copy and refreshes configuration count/EP0 packet size. A template write might
+therefore have no effect on EP0. An inferred context chain through `0x002c1240`
+is documented for future investigation but has not been added to the probe.
+
+Validation: 56 offline unit tests pass, including 16 new probe/parser tests;
+stock inspection still selects chip 2 / 263 bytes; packet preview and
+`git diff --check` pass. Hardware: the supplied security-register result
+`00 00 00` is preserved locally and summarized in HARDWARE.md. No new controller
+result was collected by this continuation, and no completed experiment was
+rerun. The older failed descriptor capture contains no RAM dump. The old
+stock-upload JSON's failure label is from the corrected version-check bug.
+
+**Next:** run `python3 bt600_vendor_read.py --descriptor-targets` in normal
+macOS Terminal. Read `results/bt600-targets-*.json` directly. Compare the reported
+template and standard descriptor before deciding whether a bounded active-copy
+chain read is justified. Do not write candidate addresses, repeat broad scans,
+or invoke the full ASUS upgrade based only on the offline map. The standalone
+audio/metadata bridge still needs the USB persona, radio-side stack, codec,
+and boot implementation.
+
+The earlier session record below is retained for provenance; its broad capture
+and stock-upload commands are superseded by the bounded next step above.
+
+
 ## Prepared continuation: descriptor/RAM capture and iPod Classic reference
 
 The owner has an iPod Classic but cannot locate it right now. Published source

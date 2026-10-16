@@ -43,4 +43,11 @@ not required to continue this source analysis.
 
 ## Next controller evidence
 
-Run `python3 run_bt600_experiment.py` in normal Terminal. It uploads stock firmware first, checks the version, and then queries the RAM literal at `0x00217e88`. That address answered on the actual dongle; the former `0x0880a0a8` candidate disconnected USB and has been removed. Next, use bounded RAM reads to map resident code and descriptor tables. Record car acceptance only from a car test or captured USB transactions.
+Run `python3 bt600_vendor_read.py --descriptor-targets` in normal Terminal and
+read its saved JSON. This is the bounded next experiment; the earlier stock
+upload and RAM write/restore have already succeeded. FIRMWARE.md now traces
+ASUS ECO-2's template allocation, binding-time descriptor copy, setup callback,
+and EP0 response. Matching the template to GET_DESCRIPTOR does not alone locate
+the active descriptor copy. Keep the full ASUS upgrade path separate from the
+prior small stock upload. Record car acceptance only from a car test or USB
+transactions captured at the head unit.

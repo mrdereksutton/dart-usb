@@ -106,3 +106,123 @@ Realtek's datasheet lists an ARMv8M Real-M300 core and shows ROM/RAM/FLASH. It d
 - [Realtek RTL8761C tools listing](https://www.realmcu.com/en/Resources/Tools/RTL8761C-Series)
 - [Research memory-reader source](https://github.com/darkmentorllc/DarkFirmware_real_i/blob/master/04_custom_patch_writer/RTL8761B_usbbluetooth_Memory_Reader.py)
 - [Researchers' newer Bluetooth firmware analysis tooling](https://github.com/darkmentorllc/bt-re-mad-skillz) (reference only; not installed or launched by this project)
+
+## Full ASUS RTBTCore image — 2026-10-16 continuation
+
+This supersedes the small upstream patch as the immediate source for USB code
+analysis. The upstream upload result above remains a separate experiment.
+
+Source: [ASUS Linux driver v3.1.07](https://dlcdnets.asus.com/pub/ASUS/wireless/USB-BT600/DR_USB-BT600_v3.1.07_Linux.zip),
+archive SHA-256 `33eae0a21fd2153c5962cb3b4cc0fd7508924f0a929f262370ec22c81ada2ce8`.
+Inside `USB-BT600_Linux driver/20251017_LINUX_BT_DRIVER.tar.gz`, the relevant
+files are `usb/bluetooth_usb_driver/rtk_misc.c` and
+`rtkbt-firmware/lib/firmware/rtl8761cu_mx_fw` / `rtl8761cu_mx_config`.
+The driver table at line 650 selects these files for PID `0x1d70`.
+
+The firmware is 1,075,583 bytes, signature `RTBTCore`, SHA-256
+`bfadde9c084726cec144828fe6aaaa917047d39616efb66de298366993d13f46`.
+The config is the same 11 bytes recorded above. Both the local archive and
+firmware hashes matched the handoff on continuation.
+
+### Selection and upgrade semantics
+
+`insert_patch` / `rtb_get_patch_header` (lines 2299–2435) choose ECO equal to
+ROM revision plus one. The observed ROM 1 selects ECO 2, priority 15, snippet
+file offset `0x834d2`, size `0x834a2` (537,762 bytes). The snippet begins
+`01 07`, followed by seven `<HHII>` records: image ID, reserved halfword,
+size, version. Data begins at snippet offset `0x56`.
+
+| Image | Snippet offset | Size | Version |
+| --- | --- | --- | --- |
+| `0x2790` | `0x56` | `0x400` | `0x1` |
+| `0x2791` | `0x456` | `0xb30` | `0x002c4002` |
+| `0x2793` | `0xf86` | `0x336b8` | `0x4bc010b3` |
+| `0x2794` | `0x3463e` | `0xb780` | `0x0200050a` |
+| `0x2795` | `0x3fdbe` | `0xb6a0` | `0x0200050a` |
+| `0x279c` | `0x4b45e` | `0xe450` | `0x002c4002` |
+| `0x279d` | `0x598ae` | `0x29bf4` | `0x002a5002` |
+
+`rtk_vendor_read(..., READ_SEC_PROJ)` (lines 2769–2859) sends `fc61` with
+`10 a4 ad 00 b0`. The user's `00 00 00` return means success and key ID zero,
+according to the first data byte the loader uses. It does not describe all
+boot/signing policy. The driver's separate `rtk_vendor_read_reg32` uses selector
+`0x21`; this project's targeted probe retains the already working `0x20` format.
+
+`needs_hci_upgrade` (lines 2872–2916) sends `fdbb`, subcommand 1 and up to 128
+bytes of selected data. At lines 3441–3458 a positive state selects firmware
+without config; a nonpositive return selects config only (or a short zero block
+when config is absent). No `fdbb` negotiation or full ASUS image upload has been
+performed. Do not equate this upgrade path with the prior 263-byte stock upload,
+or assume it is volatile. The offline extractor has no USB or upload code.
+
+### Reproduce extraction and disassembly
+
+```sh
+python3 analyze_asus_firmware.py /path/to/rtl8761cu_mx_fw --output results/asus-eco2
+cd results/asus-eco2
+xcrun clang -target armv8m.main-none-eabi -c asus-app.S -o asus-app.o
+xcrun llvm-objdump -d --no-show-raw-insn --adjust-vma=0x02167400 asus-app.o > asus-app-disassembly.txt
+```
+
+Choose a new output directory for each extraction. The tool requires the exact
+firmware hash, checks section/snippet/image bounds, and writes `map.json`, the
+application payload, and an assembly wrapper. Firmware outputs remain ignored
+under `results/`; no vendor firmware is added to Git. Python alone suffices for
+extraction; the two disassembly commands use Apple's Command Line Tools.
+
+Image `0x2793` has a 1024-byte header. Header words at image offsets `0x14c`
+and `0x150` both contain `0x02167400`. Mapping its payload at this address gives
+coherent Thumb instructions and literal references. Payload file offset is
+`0x84858` (`0x834d2 + 0x1386`), length 209,592, SHA-256
+`a3126e4a3922d8d46da8ce94c6024994130c9f2980395d0ae196f80fac008e17`.
+For an address `A` in this payload, file offset is
+`0x84858 + A - 0x02167400`. This is an offline execution-map interpretation;
+no read from the dongle has matched it yet. Literal pools and strings can be
+printed as instructions by linear disassembly; follow control flow and resolve
+Thumb PC-relative loads using `Align(A + 4, 4) + immediate`.
+
+### Descriptor template and the active EP0 copy
+
+All addresses below refer to the pinned ECO-2 application above, not measured
+live locations. `B = 0x002c10a8` is a global USB state block.
+
+| Instruction address | Evidence / inferred role |
+| --- | --- |
+| `0x02177650..0x02177660` | Allocation requests 18 bytes; name string resolves to `alloc_assign_device_descriptor_content` |
+| `0x02177662..0x02177664` | Loads `B` from literal pool `0x02177804`, stores descriptor pointer at `B + 0x0c = 0x002c10b4` |
+| `0x02177692..0x02177698` | Fills Bluetooth device class `e0/01/01` |
+| `0x021776ac..0x021776b2` | VID/PID copied from `0x002808a8 + 0x10/+0x12` (word at `0x002808b8`) |
+| `0x0217756e..0x0217758c` | Allocates a `0x48`-byte driver object `D`, stores it at `B + 8`, copies template pointer to `D + 4` |
+| `0x021776d6..0x021776fe` | Initializes template, builds driver, passes `D` to registration at `0x02189a46` |
+| `0x02189a6c..0x02189a70` | Stores Thumb callback `0x0218958d` at `D + 0x34`; setup-handler entry is `0x0218958c` |
+| `0x02189418..0x02189460` | Bind allocates composite state `C` of size `0x38`; gadget object `G` stores `C` at `G + 0x3c`; bind setup keeps `D` at `C + 0x30` |
+| `0x021894c0..0x021894c6` | Calls descriptor-copy helper with destination `C + 0x0c` and source `[D + 4]` |
+| `0x021893b0..0x021893fa` | Copies 18 bytes, preserving nonzero destination identity/string fields |
+| `0x0218549c..0x021854e2` | EP0 dispatcher routes standard request 6 through driver setup, as well as class/vendor requests |
+| `0x021851ea..0x0218520c` | Indirect setup callback via the registered driver |
+| `0x0218961a` | TBB dispatch: request 6 resolves to `0x0218962a` |
+| `0x0218962a..0x0218964e` | Checks request type `0x80`, selects descriptor type 1 |
+| `0x0218964e..0x02189672` | Refreshes configuration count and EP0 packet size in `C + 0x0c`, then copies `min(wLength, 18)` bytes from that active descriptor into the EP0 request buffer |
+| `0x021898a0..0x021898ac` | Queues response through endpoint operations callback |
+
+**Implication:** `*[0x002c10b4]` is the initialization template. EP0 serves the
+copy at `C + 0x0c`. Editing the template after binding may leave GET_DESCRIPTOR
+unchanged. Do not choose a write target solely because its 18 bytes match USB.
+The probe now compares the candidate template against a standard GET_DESCRIPTOR
+response collected in the same configured session, without changing memory.
+
+An additional offline chain can locate the active copy if the live image matches:
+registration at `0x02188a2a` loads context `R = *[0x002c1240]`, stores the driver
+at `R + 0x48`, then passes `G = R + 4` to its bind callback. Thus the inferred
+active descriptor is `*[R + 0x40] + 0x0c`. The literal `0x002c1240` is at
+`0x02188a80`. **This chain has not been read on hardware and is not added to
+`--descriptor-targets`.** First interpret the prepared target result; then, if
+appropriate, design a separate bounded chain read with null/alignment/range
+checks at every hop. No write or guessed MMIO read follows from this map.
+
+Configuration descriptor construction is also visible at `0x02188e9e`: it
+builds the nine-byte header and appends per-function descriptors through
+`0x02188c84`. The GET_DESCRIPTOR configuration path calls `0x02188f1c` at
+`0x02189720`. This gives a specific next offline target for the UAC1/HID persona.
+The 192-byte/ms audio endpoint capacity, A2DP/AVRCP stack, and persistent boot
+implementation remain unresolved.

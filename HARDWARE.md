@@ -75,3 +75,32 @@ So the controller exposes full RAM read and write plus a launching firmware-down
 - How the controller relocates a downloaded patch, and the real load base.
 - Which changes survive USB reconfiguration and complete power loss.
 - The car's supported USB/iPod protocol details needed for a working bridge.
+
+## Latest handoff evidence and pending targeted read
+
+The supplied 2026-10-16 Terminal record contains:
+
+| Query | Parameters | Return parameters |
+| --- | --- | --- |
+| `0x1001` Local Version | none | `00 0e 0e 00 0e 5d 00 61 87` |
+| `0xfc6d` ROM Version | none | `00 01` |
+| `0xfc61` ASUS READ_SEC_PROJ | `10 a4 ad 00 b0` | `00 00 00` |
+
+ASUS's loader uses the first data byte as key ID: zero here. This does not
+measure all boot/signing policy. USB class remained `e0/01/01`; original USB
+configuration was zero and the probe restored that unconfigured state.
+The original JSON is preserved locally under
+`results/handoff-2026-10-16/last_successful_probe.json`.
+
+The prepared `bt600_vendor_read.py --descriptor-targets` result is still pending.
+It reads the firmware-derived pointer at `0x002c10b4`, conditionally follows it
+for an 18-byte template descriptor, and reads VID/PID settings at `0x002808b8`.
+It also captures standard GET_DESCRIPTOR for comparison. No new memory read,
+write, upload, or car result is claimed by offline tests.
+
+Evidence limits on earlier wording: not finding a prologue or VID/PID pattern
+in sampled memory does not prove relocation, or that identity is exclusively
+in efuse/config. The saved stock-upload transcript's obsolete `stock_running:
+false`/exit 3 reflects the fixed version-comparison bug; its raw acknowledgments
+and changed runtime version remain the observations. The failed
+`descriptor-20261016T095759.183191Z` run has no completed descriptor/RAM capture.
