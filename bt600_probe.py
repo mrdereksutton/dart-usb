@@ -43,6 +43,14 @@ MAX_MEMORY_WORDS = 256
 # controller keeps its USB identity; whether that location is writable decides
 # whether the dongle can be made to enumerate as something else.
 USB_VID_PID_SIGNATURE = struct.pack("<HH", VID, PID)
+# fc61 word byte order is unconfirmed, so search every plausible arrangement of
+# the vendor/product shorts rather than risk a byte-order false negative.
+USB_SIGNATURE_VARIANTS = tuple(dict.fromkeys((
+    struct.pack("<HH", VID, PID),           # 05 0b 70 1d
+    struct.pack(">HH", VID, PID),           # 0b 05 1d 70
+    struct.pack("<HH", VID, PID)[::-1],     # 1d 70 0b 05
+    struct.pack(">HH", VID, PID)[::-1],     # 70 1d 05 0b
+)))
 
 # Exact linux-firmware blob 475320d0bd5c982cc472422cb37d263f785a24f3.
 # Source: kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware/
@@ -433,8 +441,9 @@ def main():
             if len(rom) < 2 or rom[0] != 0:
                 raise RuntimeError("No ROM version returned; no scan was run")
             scan_start, scan_words = args.find_descriptor
+            variants = " ".join(v.hex() for v in USB_SIGNATURE_VARIANTS)
             print(f"Scanning {scan_words} words from 0x{scan_start:08x} for USB signature "
-                  f"{USB_VID_PID_SIGNATURE.hex(' ')}, read-only", flush=True)
+                  f"(any byte order: {variants}), read-only", flush=True)
             blob = bytearray()
             for address in range(scan_start, scan_start + scan_words * 4, 4):
                 try:
@@ -444,16 +453,23 @@ def main():
                     break
                 if len(blob) % 0x2000 == 0:
                     print(f"  ...scanned through 0x{address:08x}", flush=True)
-            hit = find_patch_base(blob, scan_start, USB_VID_PID_SIGNATURE)
+            hit = None
+            for variant in USB_SIGNATURE_VARIANTS:
+                candidate = find_patch_base(blob, scan_start, variant)
+                if candidate is not None:
+                    hit = (candidate, variant)
+                    break
             if hit is not None:
-                window_start = max(0, (hit - scan_start) - 8)
+                address, variant = hit
+                window_start = max(0, (address - scan_start) - 8)
                 window = bytes(blob)[window_start:window_start + 32]
-                print(f"USB vendor/product signature found at 0x{hit:08x}")
+                print(f"USB vendor/product bytes {variant.hex(' ')} found at 0x{address:08x}")
                 print(f"  context 0x{scan_start + window_start:08x}: {window.hex(' ')}")
                 print("  If this sits in writable RAM, the dongle's USB identity can likely be changed.")
             else:
                 scanned_end = scan_start + len(blob)
-                print(f"Signature not found in 0x{scan_start:08x}..0x{scanned_end:08x}; widen or move the window.")
+                print(f"No byte order of the signature found in 0x{scan_start:08x}..0x{scanned_end:08x}; "
+                      "the identity is likely in config/efuse this read path cannot reach.")
         if args.probe_memory:
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)

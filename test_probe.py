@@ -135,6 +135,15 @@ class DescriptorScanTests(unittest.TestCase):
     def test_absent_signature_returns_none(self):
         self.assertIsNone(probe.find_patch_base(b"\x11" * 64, 0x00210000, probe.USB_VID_PID_SIGNATURE))
 
+    def test_byte_order_variants_cover_both_endiannesses(self):
+        variants = set(probe.USB_SIGNATURE_VARIANTS)
+        self.assertIn(bytes.fromhex("050b701d"), variants)
+        self.assertIn(bytes.fromhex("1d700b05"), variants)
+        # A reversed-word layout is located by one of the variants.
+        blob = b"\x00" * 12 + bytes.fromhex("1d700b05")
+        self.assertTrue(any(probe.find_patch_base(blob, 0x1000, v) is not None
+                            for v in probe.USB_SIGNATURE_VARIANTS))
+
 
 class MapMemoryTests(unittest.TestCase):
     def test_coalesce_runs_merges_consecutive_kinds(self):
