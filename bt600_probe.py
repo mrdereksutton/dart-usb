@@ -249,8 +249,18 @@ def main():
                         help="Sample one word per 4 KB page over 0x0..0x400000 and report readable regions, read-only")
     parser.add_argument("--find-descriptor", nargs="*", metavar="ARG",
                         help="Scan memory for the 0b05:1d70 USB signature, read-only; optional START WORDS (default 0x00210000 16384)")
+    parser.add_argument("--find-patch", nargs=2, metavar=("START", "WORDS"),
+                        help="Scan START..+WORDS for the resident stock patch prologue (run after --load-stock), read-only")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
+    if args.find_patch:
+        try:
+            start, words = (int(value, 0) for value in args.find_patch)
+        except ValueError as error:
+            parser.error(str(error))
+        if start % 4 or not 1 <= words <= 0x40000:
+            parser.error("Use a four-byte-aligned START and 1..262144 WORDS")
+        args.find_patch = (start, words)
     if args.read_range:
         try:
             args.read_range = validate_memory_range(*(int(value, 0) for value in args.read_range))
@@ -480,6 +490,28 @@ def main():
                 scanned_end = scan_start + len(blob)
                 print(f"No byte order of the signature found in 0x{scan_start:08x}..0x{scanned_end:08x}; "
                       "the identity is likely in config/efuse this read path cannot reach.")
+        if args.find_patch:
+            if len(rom) < 2 or rom[0] != 0:
+                raise RuntimeError("No ROM version returned; no scan was run")
+            needle = stock_payload(rom[1])[2][:16]
+            patch_start, patch_words = args.find_patch
+            print(f"Scanning {patch_words} words from 0x{patch_start:08x} for the resident patch prologue "
+                  f"{needle.hex(' ')}, read-only", flush=True)
+            blob = bytearray()
+            for address in range(patch_start, patch_start + patch_words * 4, 4):
+                try:
+                    blob.extend(read_memory_word(command, address, quiet=True))
+                except RuntimeError as error:
+                    print(f"Stopped at 0x{address:08x}: {error}")
+                    break
+                if len(blob) % 0x2000 == 0:
+                    print(f"  ...scanned through 0x{address:08x}", flush=True)
+            base = find_patch_base(blob, patch_start, needle)
+            if base is not None:
+                print(f"Patch prologue found: controller load base = 0x{base:08x}")
+            else:
+                print(f"Patch prologue not in 0x{patch_start:08x}..0x{patch_start + len(blob):08x}; "
+                      "widen or move the window (and confirm the patch is still resident).")
         if args.probe_memory:
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)
