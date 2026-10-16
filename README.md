@@ -22,6 +22,17 @@ python3 bt600_probe.py
 
 This command has been run on the actual dongle. Its output is recorded in `HARDWARE.md`.
 
+## Compare dongles
+
+`usb_inspect.py` dumps the real USB descriptors of any connected device, for comparing hardware in practice rather than from assumptions. Read-only standard requests only; no vendor or HCI commands.
+
+```bash
+python3 usb_inspect.py            # one-line summary of every USB device
+python3 usb_inspect.py 0b05:1d70  # full dump of one VID:PID (class, interfaces, endpoints)
+```
+
+Plug in a dongle, run the summary to find its line, then re-run with its `VID:PID` for the full interface/endpoint breakdown.
+
 Inspect the embedded stock patch without opening USB:
 
 ```bash
