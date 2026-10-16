@@ -3,6 +3,9 @@
 The owner has an iPod Classic. It supplies a real device for comparing USB
 interfaces and the behavior the Dart expects from an iPod.
 
+The device is not currently at hand. Continue with the published source map in
+[IPOD_PROTOCOL.md](IPOD_PROTOCOL.md); the captures below can be collected later.
+
 ## Capture its USB profile on the Mac
 
 Connect the iPod in its normal mode and run from normal macOS Terminal:

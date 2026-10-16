@@ -67,6 +67,7 @@ The current work is identifying how the RTL8761C controller loads code, accesses
 - [bt600_probe.py](bt600_probe.py): the working version probe and experimental upload/read options.
 - [USB_BRIDGE.md](USB_BRIDGE.md): USB audio/iAP implementation references and the hardware work needed to port them.
 - [IPOD_REFERENCE.md](IPOD_REFERENCE.md): use the owner's iPod Classic as a USB/car reference.
+- [IPOD_PROTOCOL.md](IPOD_PROTOCOL.md): published iPod Classic firmware, USB/iAP startup, and metadata/control commands.
 
 ### Run the probe
 

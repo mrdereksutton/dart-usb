@@ -2,7 +2,11 @@
 
 ## Prepared continuation: descriptor/RAM capture and iPod Classic reference
 
-The owner has an iPod Classic available as a reference. Two commands are now
+The owner has an iPod Classic but cannot locate it right now. Published source
+already supplies the next protocol reference: see `IPOD_PROTOCOL.md` for the
+pinned RockPod implementation, USB audio/HID layout, packet fragmentation,
+IDPS/audio activation, and metadata/control command IDs. Continue without waiting
+for the physical iPod. Two capture commands are now
 prepared in this branch; their new capture output is still to be collected from
 normal macOS Terminal:
 
