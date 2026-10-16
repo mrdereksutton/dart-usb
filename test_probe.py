@@ -40,5 +40,27 @@ class StockPatchTests(unittest.TestCase):
         self.assertEqual([p[0] for p in parts[126:129]], [126, 127, 0x81])
 
 
+class MemoryProbeTests(unittest.TestCase):
+    def test_vector_table_interpretation(self):
+        data = struct.pack('<II', 0x0021ab00, 0x00001291)
+        sp, reset = probe.parse_vector_table(data)
+        self.assertEqual(sp, 0x0021ab00)
+        self.assertEqual(reset, 0x00001291)
+        self.assertEqual(reset & ~1, 0x00001290)  # Thumb bit cleared for the entry
+
+    def test_vector_table_partial_and_empty(self):
+        self.assertEqual(probe.parse_vector_table(b''), (None, None))
+        self.assertEqual(
+            probe.parse_vector_table(struct.pack('<I', 0x0021ab00)),
+            (0x0021ab00, None),
+        )
+
+    def test_vector_table_read_is_first_and_literals_present(self):
+        addresses = [a for a, _ in probe.MEMORY_PROBE_ADDRESSES]
+        self.assertEqual(addresses[0], 0x00000000)
+        self.assertIn(0x00217E88, addresses)
+        self.assertIn(0x0880A0A8, addresses)
+
+
 if __name__ == '__main__':
     unittest.main()

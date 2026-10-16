@@ -42,9 +42,17 @@ HCI opcode `0xfc20` sends the fragments. The first parameter byte is the fragmen
 
 The disassembly is in `rtl8761cu_patch_disassembly.txt`. It uses ARM Thumb instructions, consistent with Realtek's C-chip datasheet.
 
-The selected patch is only 252 bytes, but the main routine calls offsets such as `+0x220`, `+0x22a`, and `+0x270`. Some literal-pool references also extend beyond the selected region. These offsets need to be related to the actual controller load address and its existing ROM/flash code. The zero-based disassembly alone does not supply that map.
+The selected patch is only 252 bytes, but the main routine calls offsets outside it. Decoding every `bl` in the real patch bytes gives a fixed, load-base-independent picture, because a Thumb `bl` encodes a PC-relative displacement: if the patch loads at base `B`, each call lands at `B + T0`, where `T0` is the disassembler's zero-based target.
 
-Literals include `0x00217e88` and `0x0880a0a8`; the optional memory probe uses these as candidate RAM and mapped-flash addresses. It tries the B family's `0xfc61` four-byte read format, allowing the C controller's reply to tell us whether that interface is shared.
+| Call sites | Zero-based target(s) `T0` | Resolves to |
+| --- | --- | --- |
+| `0x10`, `0x48` | `0xffde9290` (displacement −0x216d84) | one helper at `B − 0x216d70` |
+| `0x50` | `0xffff2400` (displacement −0xdc00) | one helper at `B − 0xdc00` |
+| `0x54`–`0x74` | `0x220, 0x22a, 0x234, 0x23e, 0x248, 0x252, 0x25c, 0x266, 0x270` | nine entries at `B + 0x220`, spaced exactly 10 bytes |
+
+None of those targets is inside the 252-byte patch, and all four chip entries point to the same 252 bytes, so there is no larger patch image in the file to supply them. The nine evenly spaced 10-byte targets look like a trampoline/jump table in existing code, and the two negative-displacement calls hit code below the patch. For `B − 0x216d70` to be a valid positive code address, `B` must sit at roughly `0x0021xxxx` — the same region as the patch's RAM data literals. The main routine confirms that region is live memory: it scans a table from `0x00217e88` up to `0x0021a400` (loaded from literals at offsets `0x80`/`0x98`), reading short records. The other probe literal, `0x0880a0a8`, is a mapped-flash/peripheral-window address.
+
+The load base `B` cannot be pinned from the zero-based disassembly alone; it has to be read from the chip. The `--probe-memory` experiment reads the ARM vector table at `0x00000000` first: word 0 (initial stack pointer) gives the top of RAM and word 1 (reset vector) gives the ROM entry, which together anchor the map and let us test the `0x0021xxxx` bracket for `B`. It then reads `0x00217e88` and `0x0880a0a8`. All reads use the B family's `0xfc61` format, so the controller's reply also tells us whether that interface is shared; nothing is written.
 
 Do not use the older B-family MIPS code as C-chip machine code. Its research is useful for protocol ideas and tooling, while C needs its own memory map and ARM hooks.
 

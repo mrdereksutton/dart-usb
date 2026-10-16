@@ -5,8 +5,8 @@ Uses the existing Homebrew libusb installation. Queries USB descriptors,
 HCI Read Local Version Information (0x1001), and Realtek Read ROM Version
 (0xFC6D). Default mode does not download firmware. --load-stock sends the
 stock linux-firmware RTL8761CU driver patch for the detected ROM revision.
---probe-memory additionally tries two four-byte vendor memory reads.
-Neither mode resets the controller or detaches a kernel driver.
+--probe-memory additionally reads the ARM vector table and two patch-derived
+addresses. Neither mode resets the controller or detaches a kernel driver.
 If the device is unconfigured, configuration 1 is selected for the query and
 the original unconfigured state is restored on exit.
 """
@@ -23,6 +23,24 @@ import sys
 
 VID, PID = 0x0B05, 0x1D70
 P = C.c_void_p
+
+# Vendor memory-read experiment. 0xFC61 is the RTL8761B memory-read opcode and
+# the first parameter byte selects the access on that family. Whether the C
+# chip implements it is an open question, so each read is gated on a success
+# status and the probe stops on the first rejection. These are reads only.
+MEMORY_READ_OPCODE = 0xFC61
+MEMORY_READ_ACCESS = 0x20
+# 0x00000000: ARM vector table. Word 0 is the initial stack pointer (top of
+# RAM); word 1 is the reset vector (ROM entry, Thumb bit set). Both anchor the
+# chip's memory map independent of where the patch loads, which is what the
+# zero-based disassembly cannot supply. 0x00217e88 is the start of the table
+# the stock patch scans up to 0x0021a400; 0x0880a0a8 is the patch's
+# mapped-flash-window literal.
+MEMORY_PROBE_ADDRESSES = (
+    (0x00000000, "ARM vector table (initial SP, reset vector)"),
+    (0x00217E88, "patch data table"),
+    (0x0880A0A8, "mapped-flash window"),
+)
 
 # Exact linux-firmware blob 475320d0bd5c982cc472422cb37d263f785a24f3.
 # Source: kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware/
@@ -79,6 +97,18 @@ def download_fragments(payload):
         yield bytes((command_index,)) + data
 
 
+def parse_vector_table(data):
+    """Interpret bytes read from 0x0 as an ARMv8-M vector table.
+
+    Returns (initial_sp, reset_vector) using whichever words are present. The
+    reset vector carries the Thumb bit in bit 0; the actual entry is the value
+    with that bit cleared.
+    """
+    sp = struct.unpack_from("<I", data, 0)[0] if len(data) >= 4 else None
+    reset = struct.unpack_from("<I", data, 4)[0] if len(data) >= 8 else None
+    return sp, reset
+
+
 class DeviceDescriptor(C.Structure):
     _fields_ = [
         ("length", C.c_uint8), ("kind", C.c_uint8), ("usb", C.c_uint16),
@@ -94,7 +124,7 @@ class DeviceDescriptor(C.Structure):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
-    parser.add_argument("--probe-memory", action="store_true", help="Try four-byte reads at known RAM and flash addresses")
+    parser.add_argument("--probe-memory", action="store_true", help="Read the ARM vector table, then the patch's RAM and flash literals")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
     if args.inspect_stock:
@@ -244,19 +274,29 @@ def main():
                 print("Stock patch is running." if observed == expected_version else "Both fragments were acknowledged; the version did not switch to the expected value.")
             keep_configuration = True
         if args.probe_memory:
-            # RAM/config pointer and mapped flash address occur as literals
-            # in the stock C-chip ARM patch. 0xFC61 is a memory-read command
-            # on the B family; this experiment checks whether C exposes it.
-            for address in (0x00217E88, 0x0880A0A8):
-                print(f"Trying four-byte memory read at 0x{address:08x}", flush=True)
-                result = command(0xFC61, struct.pack("<BI", 0x20, address))
-                if result and result[0] == 0:
-                    print(f"Memory 0x{address:08x}: {result[1:].hex(' ')}")
-                else:
+            # 0xFC61 is the B-family memory-read opcode; whether the C chip
+            # implements it is unknown. The vector table at 0x0 is read first
+            # because its contents are self-interpreting: a plausible initial
+            # SP and reset vector both confirm the command works and anchor the
+            # memory map regardless of the patch load base. Reads only.
+            for address, label in MEMORY_PROBE_ADDRESSES:
+                print(f"Reading memory at 0x{address:08x} ({label})", flush=True)
+                result = command(MEMORY_READ_OPCODE, struct.pack("<BI", MEMORY_READ_ACCESS, address))
+                if not result or result[0] != 0:
                     status = f"0x{result[0]:02x}" if result else "empty response"
                     print(f"Memory-read command returned {status}.")
                     if result and result[0] == 1:
+                        print("The C chip does not expose this opcode; stopping memory reads.")
                         break
+                    continue
+                data = result[1:]
+                print(f"Memory 0x{address:08x}: {data.hex(' ')}")
+                if address == 0x00000000:
+                    sp, reset = parse_vector_table(data)
+                    if sp is not None:
+                        print(f"  initial stack pointer (top of RAM): 0x{sp:08x}")
+                    if reset is not None:
+                        print(f"  reset vector (ROM entry): 0x{reset & ~1:08x}")
         print("Diagnostic complete.")
         return 0
     except RuntimeError as error:

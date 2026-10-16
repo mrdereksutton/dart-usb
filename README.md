@@ -44,7 +44,7 @@ An additional experiment tests whether the C chip accepts the B family's memory-
 python3 bt600_probe.py --probe-memory
 ```
 
-That option tries two four-byte reads at addresses found in the C-chip patch. Its behavior on this C chip is an open research question. It does not write memory.
+That option reads the ARM vector table at `0x00000000` first — its initial stack pointer and reset vector anchor the memory map and let us locate the patch's load base — then reads the patch's RAM-table and mapped-flash literals. Whether the C chip accepts the `0xfc61` format is an open research question. It does not write memory.
 
 ## Firmware provenance
 
