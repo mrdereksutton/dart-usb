@@ -123,5 +123,18 @@ class ReadRangeTests(unittest.TestCase):
             self.assertIn("Memory 0x00217e88: b4 88 3b c2", output.getvalue())
 
 
+class DescriptorScanTests(unittest.TestCase):
+    def test_signature_is_the_little_endian_vid_pid(self):
+        self.assertEqual(probe.USB_VID_PID_SIGNATURE, bytes.fromhex("050b701d"))
+
+    def test_find_locates_the_descriptor_signature_in_a_blob(self):
+        blob = b"\x00" * 20 + bytes.fromhex("12 01 00 02 e0 01 01 40") + probe.USB_VID_PID_SIGNATURE
+        hit = probe.find_patch_base(blob, 0x00210000, probe.USB_VID_PID_SIGNATURE)
+        self.assertEqual(hit, 0x00210000 + 28)
+
+    def test_absent_signature_returns_none(self):
+        self.assertIsNone(probe.find_patch_base(b"\x11" * 64, 0x00210000, probe.USB_VID_PID_SIGNATURE))
+
+
 if __name__ == '__main__':
     unittest.main()

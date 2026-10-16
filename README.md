@@ -67,6 +67,14 @@ python3 bt600_probe.py --read-range 0x00217e88 64
 
 It permits 1..256 four-byte words, aligned to four bytes, entirely within `0x00217000..0x00217fff`. That page is an experiment boundary around the responding address, not a measured RAM map. Only `0x00217e88` has returned data so far. The default runner does not expand into a range read. Each completed word is printed immediately; any rejected, malformed, or timed-out read stops with an error. Finding the detected ROM's stock prologue identifies a candidate load address, which still needs execution/mapping evidence.
 
+To locate where the controller keeps its own USB identity — the gate for whether the dongle can be made to enumerate as anything other than a Bluetooth controller:
+
+```bash
+python3 bt600_probe.py --find-descriptor
+```
+
+This scans memory, read-only, for the little-endian `0b05:1d70` vendor/product bytes (`05 0b 70 1d`) as they appear inside a USB device descriptor. It defaults to `0x00210000` for `16384` words and accepts an explicit `START WORDS`; it stops on the first failed read and prints a context window around any hit. A match in writable RAM means the dongle's USB identity can likely be changed; a signature found only in locked ROM, or not at all, argues the dongle should be the radio while the USB persona runs elsewhere. It does not write memory and does not read `0x0880a0a8`.
+
 The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
 
 ## Firmware provenance

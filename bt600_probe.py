@@ -38,6 +38,11 @@ MEMORY_PROBE_ADDRESSES = (
 # measured RAM map. Do not expand it into untested flash/peripheral windows.
 MEMORY_RANGE_START, MEMORY_RANGE_END = 0x00217000, 0x00218000
 MAX_MEMORY_WORDS = 256
+# idVendor/idProduct bytes as they appear inside a USB device descriptor
+# (little-endian 0b05, 1d70). Finding this in readable memory shows where the
+# controller keeps its USB identity; whether that location is writable decides
+# whether the dongle can be made to enumerate as something else.
+USB_VID_PID_SIGNATURE = struct.pack("<HH", VID, PID)
 
 # Exact linux-firmware blob 475320d0bd5c982cc472422cb37d263f785a24f3.
 # Source: kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware/
@@ -210,6 +215,8 @@ def main():
     parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
     parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
                         help="Read 1..256 four-byte words within candidate RAM page 0x00217000..0x00217fff")
+    parser.add_argument("--find-descriptor", nargs="*", metavar="ARG",
+                        help="Scan memory for the 0b05:1d70 USB signature, read-only; optional START WORDS (default 0x00210000 16384)")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
     if args.read_range:
@@ -217,6 +224,19 @@ def main():
             args.read_range = validate_memory_range(*(int(value, 0) for value in args.read_range))
         except ValueError as error:
             parser.error(str(error))
+    if args.find_descriptor is not None:
+        if len(args.find_descriptor) == 0:
+            args.find_descriptor = (0x00210000, 16384)
+        elif len(args.find_descriptor) == 2:
+            try:
+                start, words = (int(value, 0) for value in args.find_descriptor)
+            except ValueError as error:
+                parser.error(str(error))
+            if start % 4 or not 1 <= words <= 0x40000:
+                parser.error("Use a four-byte-aligned START and 1..262144 WORDS")
+            args.find_descriptor = (start, words)
+        else:
+            parser.error("--find-descriptor takes no arguments or START WORDS")
     if args.inspect_stock:
         version, chip_id, payload = stock_payload(1)
         fragments = list(download_fragments(payload))
@@ -380,6 +400,31 @@ def main():
                 print("The requested range returned only zeroes.")
             else:
                 print("Stock patch prologue was not found in this range.")
+        if args.find_descriptor is not None:
+            if len(rom) < 2 or rom[0] != 0:
+                raise RuntimeError("No ROM version returned; no scan was run")
+            scan_start, scan_words = args.find_descriptor
+            print(f"Scanning {scan_words} words from 0x{scan_start:08x} for USB signature "
+                  f"{USB_VID_PID_SIGNATURE.hex(' ')}, read-only", flush=True)
+            blob = bytearray()
+            for address in range(scan_start, scan_start + scan_words * 4, 4):
+                try:
+                    blob.extend(read_memory_word(command, address, quiet=True))
+                except RuntimeError as error:
+                    print(f"Stopped at 0x{address:08x}: {error}")
+                    break
+                if len(blob) % 0x2000 == 0:
+                    print(f"  ...scanned through 0x{address:08x}", flush=True)
+            hit = find_patch_base(blob, scan_start, USB_VID_PID_SIGNATURE)
+            if hit is not None:
+                window_start = max(0, (hit - scan_start) - 8)
+                window = bytes(blob)[window_start:window_start + 32]
+                print(f"USB vendor/product signature found at 0x{hit:08x}")
+                print(f"  context 0x{scan_start + window_start:08x}: {window.hex(' ')}")
+                print("  If this sits in writable RAM, the dongle's USB identity can likely be changed.")
+            else:
+                scanned_end = scan_start + len(blob)
+                print(f"Signature not found in 0x{scan_start:08x}..0x{scanned_end:08x}; widen or move the window.")
         if args.probe_memory:
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)
