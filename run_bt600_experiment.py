@@ -26,8 +26,10 @@ def main():
     transcript = output / f"bt600-{run_id}.txt"
     summary = output / f"bt600-{run_id}.json"
     report = {"started_utc": run_id, "read_only": args.read_only, "phases": [], "stock_running": False, "memory_read_supported": False}
-    phases = [("baseline", []), ("memory_before", ["--probe-memory"])]
-    if not args.read_only:
+    phases = [("baseline", [])]
+    if args.read_only:
+        phases.append(("memory_before", ["--probe-memory"]))
+    else:
         phases += [("stock_upload", ["--load-stock"]), ("after_upload", []), ("memory_after", ["--probe-memory"])]
     exit_code = 0
     with transcript.open("x") as log:
@@ -38,7 +40,7 @@ def main():
 
         emit("ASUS USB-BT600 experiment; USB 0b05:1d70")
         emit(f"Results: {transcript}")
-        emit("Mode: read-only" if args.read_only else "Mode: baseline, memory query, stock RAM patch, and repeat queries")
+        emit("Mode: read-only" if args.read_only else "Mode: baseline, stock RAM patch, version query, then RAM query")
         try:
             for name, options in phases:
                 emit(f"\n--- {name} ---")
@@ -64,9 +66,9 @@ def main():
                     report["memory_read_supported"] = True
                 if name == "stock_upload" and code == 0 and ("Stock patch is running." in stdout or "is already running." in stdout):
                     report["stock_running"] = True
-                # An unsupported vendor read must not prevent the independent
-                # stock-upload experiment. A failed basic probe/upload does.
-                if code and name not in ("memory_before", "memory_after"):
+                # A transport failure can mean the controller has stopped
+                # responding. Never send another phase after such a failure.
+                if code:
                     exit_code = code
                     emit("Remaining phases skipped because this phase did not complete.")
                     break

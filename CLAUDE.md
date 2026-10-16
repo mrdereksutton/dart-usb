@@ -18,12 +18,16 @@ ASUS USB-BT600, USB `0b05:1d70`, Realtek RTL8761CU, class `e0/01/01`. The user s
 
 The Codex app's process could read I/O Registry data but got IOKit `kIOReturnNotPermitted` when opening raw USB. The user's normal Terminal process opened and queried the dongle successfully. Use ordinary Terminal execution for hardware tests; do not change OS security settings.
 
+Actual memory run at 05:29 UTC: `0xfc61` returned `b4 88 3b c2` at `0x00217e88`, while zero/four returned zeroes. Querying `0x0880a0a8` timed out and the dongle disappeared from USB before the stock upload. That address is removed. The runner now uploads stock first and stops on a failed phase. Read `HARDWARE.md` and the latest `results/` before changing the experiment; do not reintroduce the failed address as a flash dump target.
+
 ## Start with this task
 
 1. Read `bt600_probe.py`, `FIRMWARE.md`, `USB_BRIDGE.md`, and `rtl8761cu_patch_disassembly.txt`. `run_bt600_experiment.py` saves controller output under `results/`; inspect any existing results before repeating hardware work.
-2. Independently review the stock-patch parser, USB/HCI framing, fragment handling, and cleanup. The diagnostic-only mode has worked on hardware. The upload and memory-read options have only been tested offline.
+2. Independently review the stock-patch parser, USB/HCI framing, fragment handling, and cleanup. The diagnostic and the RAM query at `0x00217e88` have answered on hardware. The stock upload still needs a completed hardware run.
 3. Investigate the patch's actual load address and calls to offsets outside the selected 252-byte payload. Determine how those targets relate to the chip's existing ROM/flash. The disassembly's base address is zero, not the controller's real load address.
 4. Propose and implement a small next experiment that moves toward C-chip memory access, flash access, and USB descriptor changes. Keep the user's observed ROM revision in the selection logic.
+
+The optional `--read-range START WORDS` reader is implemented and restricted to the candidate page `0x00217000..0x00217fff`, at most 256 aligned words. It stops on the first failed read and prints completed words as they arrive. Review the completed stock-upload result before running a wider read. A matching prologue is a candidate address, not proof of the CPU's execution mapping. The normal runner still reads just `0x00217e88`.
 
 ## Concrete review outputs
 

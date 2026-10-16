@@ -32,24 +32,24 @@ class ExperimentTests(unittest.TestCase):
         self.assertFalse(report["stock_running"])
         self.assertEqual(report["phases"][0]["exit_code"], 2)
 
-    def test_unsupported_memory_query_does_not_skip_stock_experiment(self):
+    def test_stock_upload_finishes_before_optional_memory_query(self):
         results = [
             subprocess.CompletedProcess([], 0, "Diagnostic complete.\n", ""),
-            subprocess.CompletedProcess([], 3, "HCI fc61 rejected with status 0x01\n", ""),
             subprocess.CompletedProcess([], 0, "Stock patch is running.\n", ""),
             subprocess.CompletedProcess([], 0, "Diagnostic complete.\n", ""),
             subprocess.CompletedProcess([], 0, "Memory 0x00217e88: 55 ab 23 87\n", ""),
         ]
         code, report, calls = self.run_simulated(results)
-        self.assertEqual((code, calls), (0, 5))
+        self.assertEqual((code, calls), (0, 4))
+        self.assertEqual([phase["name"] for phase in report["phases"]], ["baseline", "stock_upload", "after_upload", "memory_after"])
         self.assertTrue(report["stock_running"])
         self.assertTrue(report["memory_read_supported"])
 
     def test_failed_upload_stops_before_after_upload_queries(self):
         good = subprocess.CompletedProcess([], 0, "Diagnostic complete.\n", "")
         bad = subprocess.CompletedProcess([], 3, "Expected stock patch is not running.\n", "")
-        code, report, calls = self.run_simulated([good, good, bad])
-        self.assertEqual((code, calls), (3, 3))
+        code, report, calls = self.run_simulated([good, bad])
+        self.assertEqual((code, calls), (3, 2))
         self.assertFalse(report["stock_running"])
 
 

@@ -5,8 +5,9 @@ Uses the existing Homebrew libusb installation. Queries USB descriptors,
 HCI Read Local Version Information (0x1001), and Realtek Read ROM Version
 (0xFC6D). Default mode does not download firmware. --load-stock sends the
 stock linux-firmware RTL8761CU driver patch for the detected ROM revision.
---probe-memory additionally queries two boot-vector words and two patch literals.
-Neither mode resets the controller or detaches a kernel driver.
+--probe-memory additionally reads the RAM-table address that answered on this dongle.
+--read-range START WORDS reads a bounded span in the same candidate RAM page.
+These modes do not reset the controller or detach a kernel driver.
 If the device is unconfigured, configuration 1 is selected for the query and
 the original unconfigured state is restored on exit.
 """
@@ -25,17 +26,18 @@ import time
 VID, PID = 0x0B05, 0x1D70
 P = C.c_void_p
 
-# The B-family command reads four bytes at a time. Query both candidate
-# boot-vector words separately; reading only address zero cannot yield the
-# reset vector. Absolute zero is a candidate boot mapping, not a VTOR read.
+# The C chip answered this four-byte RAM read on 2026-10-16. The former
+# 0x0880A0A8 candidate timed out and disconnected the controller, so it is
+# excluded. Boot-vector reads at 0 and 4 returned only zeroes.
 MEMORY_READ_OPCODE = 0xFC61
 MEMORY_READ_ACCESS = 0x20
 MEMORY_PROBE_ADDRESSES = (
-    (0x00000000, "candidate boot initial stack pointer"),
-    (0x00000004, "candidate boot reset vector"),
     (0x00217E88, "patch data-table literal"),
-    (0x0880A0A8, "patch flash/peripheral-window literal"),
 )
+# This is an experiment boundary around the one responding address, not a
+# measured RAM map. Do not expand it into untested flash/peripheral windows.
+MEMORY_RANGE_START, MEMORY_RANGE_END = 0x00217000, 0x00218000
+MAX_MEMORY_WORDS = 256
 
 # Exact linux-firmware blob 475320d0bd5c982cc472422cb37d263f785a24f3.
 # Source: kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware/
@@ -164,12 +166,57 @@ def require_download_ack(response, index):
         raise RuntimeError(f"Download fragment {index:02x} got an acknowledgement for {response[1]:02x}")
 
 
+def find_patch_base(blob, start, needle):
+    """Return a matching patch-byte address, which is a candidate load base."""
+    if not needle:
+        raise ValueError("Patch signature must not be empty")
+    index = bytes(blob).find(bytes(needle))
+    return None if index < 0 else start + index
+
+
+def validate_memory_range(start, words):
+    if start % 4 or not 1 <= words <= MAX_MEMORY_WORDS:
+        raise ValueError(f"Use a four-byte-aligned START and 1..{MAX_MEMORY_WORDS} WORDS")
+    if not MEMORY_RANGE_START <= start < start + words * 4 <= MEMORY_RANGE_END:
+        raise ValueError("Range must remain in the candidate RAM page 0x00217000..0x00217fff")
+    return start, words
+
+
+def read_memory_word(command, address, quiet=False):
+    result = command(MEMORY_READ_OPCODE, struct.pack("<BI", MEMORY_READ_ACCESS, address), quiet=quiet)
+    if not result or result[0]:
+        status = f"0x{result[0]:02x}" if result else "empty response"
+        raise RuntimeError(f"Memory read at 0x{address:08x} returned {status}")
+    if len(result) != 5:
+        raise RuntimeError(f"Memory read at 0x{address:08x} returned {len(result) - 1} data bytes; expected four")
+    return result[1:]
+
+
+def read_memory_range(command, start, words):
+    validate_memory_range(start, words)
+    blob = bytearray()
+    for address in range(start, start + words * 4, 4):
+        # Let a failure escape immediately: no next address or diagnostic
+        # phase may run after the controller stops answering.
+        data = read_memory_word(command, address, quiet=True)
+        blob.extend(data)
+        print(f"Memory 0x{address:08x}: {data.hex(' ')}", flush=True)
+    return bytes(blob)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
-    parser.add_argument("--probe-memory", action="store_true", help="Query both candidate boot-vector words and two patch literals")
+    parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
+    parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
+                        help="Read 1..256 four-byte words within candidate RAM page 0x00217000..0x00217fff")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
+    if args.read_range:
+        try:
+            args.read_range = validate_memory_range(*(int(value, 0) for value in args.read_range))
+        except ValueError as error:
+            parser.error(str(error))
     if args.inspect_stock:
         version, chip_id, payload = stock_payload(1)
         fragments = list(download_fragments(payload))
@@ -256,7 +303,7 @@ def main():
 
         events = HCIEvents()
 
-        def command(opcode, parameters=b""):
+        def command(opcode, parameters=b"", quiet=False):
             if len(parameters) > 255:
                 raise RuntimeError("HCI command parameters exceed 255 bytes")
             payload = struct.pack("<HB", opcode, len(parameters)) + parameters
@@ -282,7 +329,8 @@ def main():
                     if result is not None:
                         matching = result
                 if matching is not None:
-                    print(f"HCI {opcode:04x} response:", matching.hex(" "))
+                    if not quiet:
+                        print(f"HCI {opcode:04x} response:", matching.hex(" "))
                     return matching
             raise RuntimeError(f"No matching response for query {opcode:04x}")
 
@@ -318,26 +366,25 @@ def main():
                 require_stock_version(after, expected_version)
                 print("Stock patch is running.")
             keep_configuration = True
+        if args.read_range:
+            if len(rom) < 2 or rom[0] != 0:
+                raise RuntimeError("No ROM version returned; no memory range was read")
+            start, words = args.read_range
+            print(f"Reading {words} four-byte words from 0x{start:08x}", flush=True)
+            blob = read_memory_range(command, start, words)
+            prologue = stock_payload(rom[1])[2][:16]
+            candidate = find_patch_base(blob, start, prologue)
+            if candidate is not None:
+                print(f"Stock patch bytes found at 0x{candidate:08x}; candidate load base (execution address still needs confirmation)")
+            elif not any(blob):
+                print("The requested range returned only zeroes.")
+            else:
+                print("Stock patch prologue was not found in this range.")
         if args.probe_memory:
-            words = {}
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)
-                result = command(MEMORY_READ_OPCODE, struct.pack("<BI", MEMORY_READ_ACCESS, address))
-                if len(result) == 5 and result[0] == 0:
-                    words[address] = result[1:]
-                    print(f"Memory 0x{address:08x}: {result[1:].hex(' ')}")
-                elif result and result[0] == 0:
-                    raise RuntimeError(f"Memory read returned {len(result) - 1} data bytes; expected four")
-                else:
-                    status = f"0x{result[0]:02x}" if result else "empty response"
-                    print(f"Memory-read command returned {status}.")
-                    if result and result[0] == 1:
-                        break
-            if 0 in words:
-                sp, reset = parse_vector_table(words[0] + words.get(4, b""))
-                print(f"Candidate initial stack pointer: 0x{sp:08x}")
-                if reset is not None:
-                    print(f"Candidate reset handler: 0x{reset & ~1:08x}; Thumb bit: {reset & 1}")
+                data = read_memory_word(command, address)
+                print(f"Memory 0x{address:08x}: {data.hex(' ')}")
         print("Diagnostic complete.")
         return 0
     except RuntimeError as error:

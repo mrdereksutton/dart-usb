@@ -37,4 +37,4 @@ An Apple VID/PID change by itself implements none of those behaviors. The iAP-ov
 
 ## Next controller evidence
 
-Run `python3 run_bt600_experiment.py` in normal Terminal. It queries both candidate boot-vector words at `0x0`/`0x4` and the two patch literals before and after the stock upload. If `0xfc61` reads work, map the resident code and descriptor tables from bounded memory dumps. If the command is rejected, inspect the C SDK/flash programming path rather than transplanting B-family memory-write commands or addresses. Record car acceptance only from a car test or captured USB transactions.
+Run `python3 run_bt600_experiment.py` in normal Terminal. It uploads stock firmware first, checks the version, and then queries the RAM literal at `0x00217e88`. That address answered on the actual dongle; the former `0x0880a0a8` candidate disconnected USB and has been removed. Next, use bounded RAM reads to map resident code and descriptor tables. Record car acceptance only from a car test or captured USB transactions.
