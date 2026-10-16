@@ -20,10 +20,18 @@ The Codex app's process could read I/O Registry data but got IOKit `kIOReturnNot
 
 ## Start with this task
 
-1. Read `bt600_probe.py`, `FIRMWARE.md`, and `rtl8761cu_patch_disassembly.txt`.
+1. Read `bt600_probe.py`, `FIRMWARE.md`, `USB_BRIDGE.md`, and `rtl8761cu_patch_disassembly.txt`. `run_bt600_experiment.py` saves controller output under `results/`; inspect any existing results before repeating hardware work.
 2. Independently review the stock-patch parser, USB/HCI framing, fragment handling, and cleanup. The diagnostic-only mode has worked on hardware. The upload and memory-read options have only been tested offline.
 3. Investigate the patch's actual load address and calls to offsets outside the selected 252-byte payload. Determine how those targets relate to the chip's existing ROM/flash. The disassembly's base address is zero, not the controller's real load address.
 4. Propose and implement a small next experiment that moves toward C-chip memory access, flash access, and USB descriptor changes. Keep the user's observed ROM revision in the selection logic.
+
+## Concrete review outputs
+
+- Put code findings and fixes in a focused commit, including a regression test for a reproducible failure.
+- Record C-chip address calculations, byte offsets, and source links in `FIRMWARE.md`. Separate inferred addresses from values read from the controller.
+- Inspect the stock image's unusually small payload: its second routine is cut off by the 252-byte selection and version replacement. Determine whether those bytes are an initializer, depend on resident code, or need another firmware revision. Do not blindly expand the upload into the zero padding.
+- Use `USB_BRIDGE.md` for the iAP/UAC1 interface reference. Determine how the C chip exposes EP0 descriptor callbacks and whether its isochronous IN endpoint can carry 192 bytes per millisecond.
+- End each work session with the changed files, test results, actual controller output collected, and the exact next experiment. A prepared repository or successful stock patch upload does not complete the audio bridge.
 
 ## Important distinctions
 
@@ -35,7 +43,7 @@ The Codex app's process could read I/O Registry data but got IOKit `kIOReturnNot
 ## Tests
 
 ```bash
-python3 -m unittest -v test_probe.py
+python3 -m unittest -v
 python3 bt600_probe.py --inspect-stock
 ```
 
