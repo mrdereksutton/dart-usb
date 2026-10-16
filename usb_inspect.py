@@ -38,8 +38,9 @@ def class_label(code, table):
 def parse_config(blob):
     """Walk a raw configuration descriptor into interfaces and their endpoints.
 
-    Returns a list of dicts: {class, subclass, protocol, endpoints: [...]}, where
-    each endpoint is {address, dir, type, max_packet}. Pure function for testing.
+    Returns a list of dicts: {number, class, subclass, protocol, report_len,
+    endpoints: [...]}, where each endpoint is {address, dir, type, max_packet}
+    and report_len is the HID report-descriptor length (0 if none). Pure.
     """
     interfaces = []
     i = 0
@@ -50,9 +51,13 @@ def parse_config(blob):
             break
         if kind == 0x04 and i + 8 <= len(blob):  # interface descriptor
             interfaces.append({
-                "class": blob[i + 5], "subclass": blob[i + 6],
-                "protocol": blob[i + 7], "endpoints": [],
+                "number": blob[i + 2], "class": blob[i + 5],
+                "subclass": blob[i + 6], "protocol": blob[i + 7],
+                "report_len": 0, "endpoints": [],
             })
+        elif kind == 0x21 and i + 9 <= len(blob) and interfaces:  # HID descriptor
+            # wDescriptorLength of the first class descriptor (the report).
+            interfaces[-1]["report_len"] = blob[i + 7] | (blob[i + 8] << 8)
         elif kind == 0x05 and i + 6 <= len(blob) and interfaces:  # endpoint
             address = blob[i + 2]
             attributes = blob[i + 3]
@@ -65,6 +70,34 @@ def parse_config(blob):
             })
         i += length
     return interfaces
+
+
+USAGE_PAGES = {0x01: "Generic Desktop", 0x0C: "Consumer", 0x0B: "Telephony"}
+
+
+def hid_usage_pages(report):
+    """Light HID item walk: return the ordered list of Usage Page values in a
+    report descriptor. Vendor-defined pages are 0xFF00-0xFFFF. Pure function."""
+    pages = []
+    i = 0
+    while i < len(report):
+        prefix = report[i]
+        if prefix in (0xFE, 0xFF):  # long item: [prefix][dataSize][tag][data...]
+            size = report[i + 1] if i + 1 < len(report) else 0
+            i += 3 + size
+            continue
+        size = {0: 0, 1: 1, 2: 2, 3: 4}[prefix & 0x03]
+        data = report[i + 1:i + 1 + size]
+        if prefix & 0xFC == 0x04:  # Usage Page (global item)
+            pages.append(int.from_bytes(data, "little") if data else 0)
+        i += 1 + size
+    return pages
+
+
+def usage_page_label(page):
+    if 0xFF00 <= page <= 0xFFFF:
+        return f"0x{page:04x} vendor-defined"
+    return f"0x{page:04x} {USAGE_PAGES.get(page, '?')}"
 
 
 class DeviceDescriptor(C.Structure):
@@ -113,6 +146,15 @@ def get_descriptor(usb, handle, desc_type, index, length):
     return buf.raw[:n] if n > 0 else b""
 
 
+def get_report_descriptor(usb, handle, interface, length):
+    # GET_DESCRIPTOR of the HID report (type 0x22), recipient = interface.
+    # May fail if the OS HID driver owns the interface; caller handles that.
+    buf = C.create_string_buffer(length)
+    n = usb.libusb_control_transfer(
+        handle, 0x81, 0x06, (0x22 << 8), interface, buf, length, 1000)
+    return buf.raw[:n] if n > 0 else b""
+
+
 def read_string(usb, handle, index):
     if not index:
         return ""
@@ -154,6 +196,16 @@ def dump_device(usb, device, desc, full):
                 for ep in iface["endpoints"]:
                     print(f"    endpoint 0x{ep['address']:02x} {ep['dir']:<3} {ep['type']:<11}"
                           f" max {ep['max_packet']} bytes")
+                if iface["report_len"] and opened:
+                    report = get_report_descriptor(usb, handle, iface["number"], iface["report_len"])
+                    if not report:
+                        print(f"    HID report descriptor: {iface['report_len']} bytes, "
+                              "unreadable (the OS HID driver likely owns this interface)")
+                    else:
+                        pages = hid_usage_pages(report)
+                        seen = ", ".join(dict.fromkeys(usage_page_label(p) for p in pages)) or "none"
+                        print(f"    HID report descriptor: {len(report)} bytes; usage pages: {seen}")
+                        print(f"      raw: {report[:48].hex(' ')}" + (" ..." if len(report) > 48 else ""))
         elif opened:
             print("  (configuration descriptor unavailable)")
     if opened:

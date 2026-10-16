@@ -30,6 +30,25 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual(insp.parse_config(b""), [])
         self.assertEqual(insp.parse_config(bytes([9, 2, 0, 0])), [])
 
+    def test_captures_interface_number_and_hid_report_length(self):
+        config = bytes([9, 2, 0, 0, 1, 1, 0, 0x80, 50])
+        iface = bytes([9, 4, 2, 0, 1, 0x03, 0x00, 0x00, 0])            # interface number 2, HID
+        hid = bytes([9, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0])  # report length 0x3f
+        ep = bytes([7, 5, 0x84, 0x03, 64, 0, 1])
+        parsed = insp.parse_config(config + iface + hid + ep)
+        self.assertEqual(parsed[0]["number"], 2)
+        self.assertEqual(parsed[0]["report_len"], 0x3F)
+
+
+class HidDecodeTests(unittest.TestCase):
+    def test_usage_pages_one_and_two_byte(self):
+        report = bytes([0x05, 0x01, 0x09, 0x02, 0x06, 0x00, 0xFF, 0x09, 0x01])
+        self.assertEqual(insp.hid_usage_pages(report), [0x01, 0xFF00])
+
+    def test_labels_flag_vendor_defined(self):
+        self.assertEqual(insp.usage_page_label(0x01), "0x0001 Generic Desktop")
+        self.assertEqual(insp.usage_page_label(0xFF00), "0xff00 vendor-defined")
+
 
 if __name__ == "__main__":
     unittest.main()
