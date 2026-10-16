@@ -42,19 +42,33 @@ HCI opcode `0xfc20` sends the fragments. The first parameter byte is the fragmen
 
 The disassembly is in `rtl8761cu_patch_disassembly.txt`. It uses ARM Thumb instructions, consistent with Realtek's C-chip datasheet.
 
-The selected patch is only 252 bytes, but the main routine calls offsets outside it. Decoding every `bl` in the real patch bytes gives a fixed, load-base-independent picture, because a Thumb `bl` encodes a PC-relative displacement: if the patch loads at base `B`, each call lands at `B + T0`, where `T0` is the disassembler's zero-based target.
+The selected patch is only 252 bytes, but the main routine calls offsets such as `+0x220`, `+0x22a`, and `+0x270`. Some literal-pool references also extend beyond the selected region. These offsets need to be related to the actual controller load address and its existing ROM/flash code. The zero-based disassembly alone does not supply that map.
 
-| Call sites | Zero-based target(s) `T0` | Resolves to |
-| --- | --- | --- |
-| `0x10`, `0x48` | `0xffde9290` (displacement −0x216d84) | one helper at `B − 0x216d70` |
-| `0x50` | `0xffff2400` (displacement −0xdc00) | one helper at `B − 0xdc00` |
-| `0x54`–`0x74` | `0x220, 0x22a, 0x234, 0x23e, 0x248, 0x252, 0x25c, 0x266, 0x270` | nine entries at `B + 0x220`, spaced exactly 10 bytes |
+Claude's [PR #1](https://github.com/mrdereksutton/dart-usb/pull/1) analyzes those relative branches. For an execution base `B`, the decoded targets are:
 
-None of those targets is inside the 252-byte patch, and all four chip entries point to the same 252 bytes, so there is no larger patch image in the file to supply them. The nine evenly spaced 10-byte targets look like a trampoline/jump table in existing code, and the two negative-displacement calls hit code below the patch. For `B − 0x216d70` to be a valid positive code address, `B` must sit at roughly `0x0021xxxx` — the same region as the patch's RAM data literals. The main routine confirms that region is live memory: it scans a table from `0x00217e88` up to `0x0021a400` (loaded from literals at offsets `0x80`/`0x98`), reading short records. The other probe literal, `0x0880a0a8`, is a mapped-flash/peripheral-window address.
+| Call offsets | Runtime target |
+| --- | --- |
+| `0x10`, `0x48` | `B - 0x216d70` |
+| `0x50` | `B - 0xdc00` |
+| `0x54` through `0x74`, step 4 | `B + 0x220` through `B + 0x270`, step 10 |
 
-The load base `B` cannot be pinned from the zero-based disassembly alone; it has to be read from the chip. The `--probe-memory` experiment reads the ARM vector table at `0x00000000` first: word 0 (initial stack pointer) gives the top of RAM and word 1 (reset vector) gives the ROM entry, which together anchor the map and let us test the `0x0021xxxx` bracket for `B`. It then reads `0x00217e88` and `0x0880a0a8`. All reads use the B family's `0xfc61` format, so the controller's reply also tells us whether that interface is shared; nothing is written.
+The regular target spacing suggests small resident entry stubs. The binary alone does not distinguish ROM, flash, or already initialized RAM at those addresses. A non-wrapping positive first target implies `B >= 0x216d70`; it does not by itself fix `B` to the `0x0021xxxx` region.
+
+Literals include `0x00217e88` and `0x0880a0a8`; the optional memory probe uses these as candidate RAM and mapped-flash addresses. It tries the B family's `0xfc61` four-byte read format, allowing the C controller's reply to tell us whether that interface is shared.
 
 Do not use the older B-family MIPS code as C-chip machine code. Its research is useful for protocol ideas and tooling, while C needs its own memory map and ARM hooks.
+
+### Additional checks, 2026-10-16
+
+Recomputing the Git object SHA-1 from the local bytes (`blob <length>\0<bytes>`) gives `475320d0bd5c982cc472422cb37d263f785a24f3`, the recorded upstream blob. The small payload is therefore present in that upstream object, rather than being caused by the base64 packaging in this script. Bytes 300 through 10,287 are zero; only the extension trailer follows.
+
+At code offset `0x84`, the literal `0xffde8400` is signed `-0x00217c00`. Adding it to the pointer `0x00217e88` gives `0x288`. This makes `0x00217c00` a useful candidate for investigating the image layout, but this arithmetic alone does not give the CPU execution address. The initializer calls beyond offset `0xfc`; the routine at offset `0xa8` also references literals beyond the selected payload. The loader substitutes the version at offsets `0xf8..0xfb`, overlapping the end of the zero-based disassembly. Resolve the resident-code/layout question before building a custom hook.
+
+The official C user guide describes configuration download over `0xfc20`, while its firmware-update section directs developers to Realtek's FAE. The SDK listing currently offers `RTL8761C linux SDK`, version `v20250813`; its download endpoint returns HTTP/application code 401 without a RealMCU login. The C-series Tools page lists no downloads. These are the current access points, not evidence that a standalone USB application SDK is included.
+
+The `0xfc61` query format was checked against the research project's `RTL8761B_usbbluetooth_Memory_Reader.py`: size byte `0x20`, followed by the little-endian 32-bit address. The C-chip experiment now rejects a successful response unless it contains exactly four data bytes.
+
+The probe incorporates PR #1's boot-vector idea, with a separate query at `0x4`: a four-byte read at `0x0` only returns the candidate initial stack pointer, never the reset vector. Values at zero and four are interpreted as candidate boot vectors; a relocated vector table, boot-memory alias, or dummy response still needs to be distinguished using subsequent reads. Initial SP is a stack address, not necessarily the physical top of all RAM; the reset handler is a code pointer, not necessarily a ROM address.
 
 ## Persistence lead
 
@@ -71,3 +85,6 @@ Realtek's datasheet lists an ARMv8M Real-M300 core and shows ROM/RAM/FLASH. It d
 - [Realtek RTL8761C SDK listing](https://www.realmcu.com/en/Resources/SDK/RTL8761C-Series)
 - [DarkFirmware_real_i: RTL8761B research](https://github.com/darkmentorllc/DarkFirmware_real_i)
 - [Firmware mirror used to obtain bytes](https://github.com/thegwchr/RealtekBluetoothFirmware/tree/main/fw)
+- [Realtek RTL8761C tools listing](https://www.realmcu.com/en/Resources/Tools/RTL8761C-Series)
+- [Research memory-reader source](https://github.com/darkmentorllc/DarkFirmware_real_i/blob/master/04_custom_patch_writer/RTL8761B_usbbluetooth_Memory_Reader.py)
+- [Researchers' newer Bluetooth firmware analysis tooling](https://github.com/darkmentorllc/bt-re-mad-skillz) (reference only; not installed or launched by this project)

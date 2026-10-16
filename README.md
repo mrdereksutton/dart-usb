@@ -10,6 +10,7 @@ The current work is identifying how the RTL8761C controller loads code, accesses
 - [HARDWARE.md](HARDWARE.md): the dongle's actual USB/HCI responses.
 - [FIRMWARE.md](FIRMWARE.md): stock image layout, sources, and the ARM disassembly question.
 - [bt600_probe.py](bt600_probe.py): the working version probe and experimental upload/read options.
+- [USB_BRIDGE.md](USB_BRIDGE.md): USB audio/iAP implementation references and the hardware work needed to port them.
 
 ## Run the probe
 
@@ -30,6 +31,18 @@ python3 -m unittest -v test_probe.py
 
 ## Next hardware experiment
 
+Run the complete sequence from normal macOS Terminal:
+
+```bash
+python3 run_bt600_experiment.py
+```
+
+It collects a baseline, tries the memory queries, uploads the matching stock host-loaded patch, and repeats the version and memory queries. It saves timestamped text and JSON output in `results/`, which is excluded from Git. A failed basic probe or upload stops the sequence. An unsupported memory-read command is recorded and does not skip the independent upload test. Use `--read-only` to collect only the baseline and memory queries.
+
+The chat process cannot open raw USB; normal Terminal has already queried this dongle successfully. The saved results can be read locally without copying Terminal output into chat.
+
+Individual upload command:
+
 ```bash
 python3 bt600_probe.py --load-stock
 ```
@@ -44,7 +57,9 @@ An additional experiment tests whether the C chip accepts the B family's memory-
 python3 bt600_probe.py --probe-memory
 ```
 
-That option reads the ARM vector table at `0x00000000` first — its initial stack pointer and reset vector anchor the memory map and let us locate the patch's load base — then reads the patch's RAM-table and mapped-flash literals. Whether the C chip accepts the `0xfc61` format is an open research question. It does not write memory.
+That option queries candidate boot-vector words at `0x0` and `0x4`, then the two addresses found in the C-chip patch. Each `0xfc61` query requests four bytes, so the reset vector needs its own read. The C controller's reply determines whether this command is available. It does not write memory.
+
+The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
 
 ## Firmware provenance
 

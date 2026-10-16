@@ -1,6 +1,7 @@
 import base64
 import struct
 import unittest
+from unittest.mock import patch
 
 import bt600_probe as probe
 
@@ -41,25 +42,55 @@ class StockPatchTests(unittest.TestCase):
 
 
 class MemoryProbeTests(unittest.TestCase):
-    def test_vector_table_interpretation(self):
-        data = struct.pack('<II', 0x0021ab00, 0x00001291)
-        sp, reset = probe.parse_vector_table(data)
-        self.assertEqual(sp, 0x0021ab00)
-        self.assertEqual(reset, 0x00001291)
-        self.assertEqual(reset & ~1, 0x00001290)  # Thumb bit cleared for the entry
+    def test_four_byte_queries_cover_both_boot_vector_words(self):
+        addresses = [address for address, _ in probe.MEMORY_PROBE_ADDRESSES]
+        self.assertEqual(addresses[:2], [0, 4])
+        words = {0: struct.pack("<I", 0x0021A400), 4: struct.pack("<I", 0x00001291)}
+        sp, reset = probe.parse_vector_table(words[0] + words[4])
+        self.assertEqual((sp, reset & ~1, reset & 1), (0x0021A400, 0x1290, 1))
 
-    def test_vector_table_partial_and_empty(self):
-        self.assertEqual(probe.parse_vector_table(b''), (None, None))
-        self.assertEqual(
-            probe.parse_vector_table(struct.pack('<I', 0x0021ab00)),
-            (0x0021ab00, None),
-        )
+    def test_partial_vector_read_does_not_invent_a_reset_handler(self):
+        self.assertEqual(probe.parse_vector_table(b""), (None, None))
+        self.assertEqual(probe.parse_vector_table(struct.pack("<I", 0x0021A400)), (0x0021A400, None))
 
-    def test_vector_table_read_is_first_and_literals_present(self):
-        addresses = [a for a, _ in probe.MEMORY_PROBE_ADDRESSES]
-        self.assertEqual(addresses[0], 0x00000000)
-        self.assertIn(0x00217E88, addresses)
-        self.assertIn(0x0880A0A8, addresses)
+
+class HCIResponseTests(unittest.TestCase):
+    def test_usb_packets_reassemble_one_event_and_preserve_the_next(self):
+        first = bytes.fromhex("0e 0c 01 01 10 00 0e 0e 00 0e 5d 00 61 87")
+        second = bytes.fromhex("0e 05 01 6d fc 00 01")
+        events = probe.HCIEvents()
+        self.assertEqual(events.feed(first[:4]), [])
+        self.assertEqual(events.feed(first[4:] + second[:3]), [first])
+        self.assertEqual(events.feed(second[3:]), [second])
+        self.assertEqual(probe.command_result(first, 0x1001), first[5:])
+        self.assertEqual(probe.command_result(second, 0xFC6D), b"\x00\x01")
+
+    def test_rejected_command_status_is_reported_immediately(self):
+        with self.assertRaisesRegex(RuntimeError, "status 0x01"):
+            probe.command_result(bytes.fromhex("0f 04 01 01 61 fc"), 0xFC61)
+        self.assertIsNone(probe.command_result(bytes.fromhex("0f 04 00 01 61 fc"), 0xFC61))
+        self.assertIsNone(probe.command_result(bytes.fromhex("0e 05 01 6d fc 00 01"), 0x1001))
+
+    def test_truncated_events_cannot_be_treated_as_success(self):
+        for event in (b"", b"\x0e", bytes.fromhex("0e 05 01 6d fc 00"), bytes.fromhex("0e 01 01")):
+            with self.subTest(event=event), self.assertRaises(RuntimeError):
+                probe.command_result(event, 0xFC6D)
+
+    def test_stock_upload_must_change_to_expected_version(self):
+        before = bytes.fromhex("00 0e 0e 00 0e 5d 00 61 87")
+        after = struct.pack("<BBHBHH", 0, 0x0E, 0x4618, 0x0E, 0x005D, 0xD3F3)
+        with patch("builtins.print"):
+            with self.assertRaisesRegex(RuntimeError, "expected stock patch is not running"):
+                probe.require_stock_version(before, 0x4618D3F3)
+            probe.require_stock_version(after, 0x4618D3F3)
+
+    def test_acknowledgement_must_match_the_fragment(self):
+        probe.require_download_ack(b"\x00\x00", 0)
+        probe.require_download_ack(b"\x00\x81", 0x81)
+        probe.require_download_ack(b"\x00\x01", 0x81)
+        for response in (b"\x00", b"\x01\x01", b"\x00\x00", b"\x00\x81\x00"):
+            with self.subTest(response=response), self.assertRaises(RuntimeError):
+                probe.require_download_ack(response, 0x81)
 
 
 if __name__ == '__main__':

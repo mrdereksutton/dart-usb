@@ -5,8 +5,8 @@ Uses the existing Homebrew libusb installation. Queries USB descriptors,
 HCI Read Local Version Information (0x1001), and Realtek Read ROM Version
 (0xFC6D). Default mode does not download firmware. --load-stock sends the
 stock linux-firmware RTL8761CU driver patch for the detected ROM revision.
---probe-memory additionally reads the ARM vector table and two patch-derived
-addresses. Neither mode resets the controller or detaches a kernel driver.
+--probe-memory additionally queries two boot-vector words and two patch literals.
+Neither mode resets the controller or detaches a kernel driver.
 If the device is unconfigured, configuration 1 is selected for the query and
 the original unconfigured state is restored on exit.
 """
@@ -19,27 +19,22 @@ import hashlib
 from pathlib import Path
 import struct
 import sys
+import time
 
 
 VID, PID = 0x0B05, 0x1D70
 P = C.c_void_p
 
-# Vendor memory-read experiment. 0xFC61 is the RTL8761B memory-read opcode and
-# the first parameter byte selects the access on that family. Whether the C
-# chip implements it is an open question, so each read is gated on a success
-# status and the probe stops on the first rejection. These are reads only.
+# The B-family command reads four bytes at a time. Query both candidate
+# boot-vector words separately; reading only address zero cannot yield the
+# reset vector. Absolute zero is a candidate boot mapping, not a VTOR read.
 MEMORY_READ_OPCODE = 0xFC61
 MEMORY_READ_ACCESS = 0x20
-# 0x00000000: ARM vector table. Word 0 is the initial stack pointer (top of
-# RAM); word 1 is the reset vector (ROM entry, Thumb bit set). Both anchor the
-# chip's memory map independent of where the patch loads, which is what the
-# zero-based disassembly cannot supply. 0x00217e88 is the start of the table
-# the stock patch scans up to 0x0021a400; 0x0880a0a8 is the patch's
-# mapped-flash-window literal.
 MEMORY_PROBE_ADDRESSES = (
-    (0x00000000, "ARM vector table (initial SP, reset vector)"),
-    (0x00217E88, "patch data table"),
-    (0x0880A0A8, "mapped-flash window"),
+    (0x00000000, "candidate boot initial stack pointer"),
+    (0x00000004, "candidate boot reset vector"),
+    (0x00217E88, "patch data-table literal"),
+    (0x0880A0A8, "patch flash/peripheral-window literal"),
 )
 
 # Exact linux-firmware blob 475320d0bd5c982cc472422cb37d263f785a24f3.
@@ -98,15 +93,10 @@ def download_fragments(payload):
 
 
 def parse_vector_table(data):
-    """Interpret bytes read from 0x0 as an ARMv8-M vector table.
-
-    Returns (initial_sp, reset_vector) using whichever words are present. The
-    reset vector carries the Thumb bit in bit 0; the actual entry is the value
-    with that bit cleared.
-    """
-    sp = struct.unpack_from("<I", data, 0)[0] if len(data) >= 4 else None
+    """Decode available boot-vector words; this does not validate their mapping."""
+    initial_sp = struct.unpack_from("<I", data, 0)[0] if len(data) >= 4 else None
     reset = struct.unpack_from("<I", data, 4)[0] if len(data) >= 8 else None
-    return sp, reset
+    return initial_sp, reset
 
 
 class DeviceDescriptor(C.Structure):
@@ -121,10 +111,63 @@ class DeviceDescriptor(C.Structure):
     ]
 
 
+class HCIEvents:
+    """Reassemble HCI events across USB packets without losing adjacent events."""
+
+    def __init__(self):
+        self.pending = bytearray()
+
+    def feed(self, packet):
+        self.pending.extend(packet)
+        events = []
+        while len(self.pending) >= 2:
+            length = self.pending[1] + 2
+            if len(self.pending) < length:
+                break
+            events.append(bytes(self.pending[:length]))
+            del self.pending[:length]
+        return events
+
+
+def command_result(event, opcode):
+    """Return a matching completion; surface explicit command rejections."""
+    if len(event) < 2 or len(event) != event[1] + 2:
+        raise RuntimeError("Malformed HCI event length")
+    if event[0] == 0x0E:
+        if len(event) < 5:
+            raise RuntimeError("Truncated HCI Command Complete")
+        if struct.unpack_from("<H", event, 3)[0] == opcode:
+            return event[5:]
+    elif event[0] == 0x0F:
+        if len(event) != 6:
+            raise RuntimeError("Malformed HCI Command Status")
+        if struct.unpack_from("<H", event, 4)[0] == opcode and event[2]:
+            raise RuntimeError(f"HCI {opcode:04x} rejected with status 0x{event[2]:02x}")
+    return None
+
+
+def require_stock_version(response, expected):
+    if len(response) != 9 or response[0] != 0:
+        raise RuntimeError("No successful version response after upload")
+    _, _, revision, _, maker, subversion = struct.unpack("<BBHBHH", response)
+    observed = (revision << 16) | subversion
+    print(f"Version after upload: 0x{observed:08x}; expected: 0x{expected:08x}")
+    if maker != 0x005D or observed != expected:
+        raise RuntimeError("Download was acknowledged but the expected stock patch is not running")
+
+
+def require_download_ack(response, index):
+    if len(response) != 2 or response[0] != 0:
+        raise RuntimeError(f"Download fragment {index:02x} was rejected: {response.hex()}")
+    # Controllers may echo the final marker or only the seven-bit index.
+    if response[1] & 0x7F != index & 0x7F:
+        raise RuntimeError(f"Download fragment {index:02x} got an acknowledgement for {response[1]:02x}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
-    parser.add_argument("--probe-memory", action="store_true", help="Read the ARM vector table, then the patch's RAM and flash literals")
+    parser.add_argument("--probe-memory", action="store_true", help="Query both candidate boot-vector words and two patch literals")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
     if args.inspect_stock:
@@ -211,6 +254,8 @@ def main():
         checked(usb.libusb_claim_interface(handle, 0), "Open Bluetooth command interface")
         claimed = True
 
+        events = HCIEvents()
+
         def command(opcode, parameters=b""):
             if len(parameters) > 255:
                 raise RuntimeError("HCI command parameters exceed 255 bytes")
@@ -222,18 +267,23 @@ def main():
             )
             if sent != len(payload):
                 raise RuntimeError(f"Short command transfer: {sent}/{len(payload)}")
-            for _ in range(5):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
                 incoming = C.create_string_buffer(64)
                 actual = C.c_int()
+                remaining_ms = max(1, min(2000, int((deadline - time.monotonic()) * 1000)))
                 checked(
-                    usb.libusb_interrupt_transfer(handle, 0x81, incoming, 64, C.byref(actual), 2000),
+                    usb.libusb_interrupt_transfer(handle, 0x81, incoming, 64, C.byref(actual), remaining_ms),
                     f"Read query response {opcode:04x}",
                 )
-                event = incoming.raw[:actual.value]
-                if len(event) >= 5 and event[0] == 0x0E and struct.unpack_from("<H", event, 3)[0] == opcode:
-                    result = event[5:]
-                    print(f"HCI {opcode:04x} response:", result.hex(" "))
-                    return result
+                matching = None
+                for event in events.feed(incoming.raw[:actual.value]):
+                    result = command_result(event, opcode)
+                    if result is not None:
+                        matching = result
+                if matching is not None:
+                    print(f"HCI {opcode:04x} response:", matching.hex(" "))
+                    return matching
             raise RuntimeError(f"No matching response for query {opcode:04x}")
 
         version = command(0x1001)
@@ -263,40 +313,31 @@ def main():
                 print(f"Uploading stock patch: chip ID {chip_id}, {len(payload)} bytes, version 0x{expected_version:08x}", flush=True)
                 for fragment in download_fragments(payload):
                     response = command(0xFC20, fragment)
-                    if len(response) < 2 or response[0] != 0:
-                        raise RuntimeError(f"Download fragment {fragment[0]:02x} was rejected: {response.hex()}")
+                    require_download_ack(response, fragment[0])
                 after = command(0x1001)
-                if len(after) < 9 or after[0] != 0:
-                    raise RuntimeError("No successful version response after upload")
-                _, new_hci, new_revision, new_lmp, new_maker, new_subversion = struct.unpack_from("<BBHBHH", after)
-                observed = (new_revision << 16) | new_subversion
-                print(f"Version after upload: 0x{observed:08x}; expected: 0x{expected_version:08x}")
-                print("Stock patch is running." if observed == expected_version else "Both fragments were acknowledged; the version did not switch to the expected value.")
+                require_stock_version(after, expected_version)
+                print("Stock patch is running.")
             keep_configuration = True
         if args.probe_memory:
-            # 0xFC61 is the B-family memory-read opcode; whether the C chip
-            # implements it is unknown. The vector table at 0x0 is read first
-            # because its contents are self-interpreting: a plausible initial
-            # SP and reset vector both confirm the command works and anchor the
-            # memory map regardless of the patch load base. Reads only.
+            words = {}
             for address, label in MEMORY_PROBE_ADDRESSES:
-                print(f"Reading memory at 0x{address:08x} ({label})", flush=True)
+                print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)
                 result = command(MEMORY_READ_OPCODE, struct.pack("<BI", MEMORY_READ_ACCESS, address))
-                if not result or result[0] != 0:
+                if len(result) == 5 and result[0] == 0:
+                    words[address] = result[1:]
+                    print(f"Memory 0x{address:08x}: {result[1:].hex(' ')}")
+                elif result and result[0] == 0:
+                    raise RuntimeError(f"Memory read returned {len(result) - 1} data bytes; expected four")
+                else:
                     status = f"0x{result[0]:02x}" if result else "empty response"
                     print(f"Memory-read command returned {status}.")
                     if result and result[0] == 1:
-                        print("The C chip does not expose this opcode; stopping memory reads.")
                         break
-                    continue
-                data = result[1:]
-                print(f"Memory 0x{address:08x}: {data.hex(' ')}")
-                if address == 0x00000000:
-                    sp, reset = parse_vector_table(data)
-                    if sp is not None:
-                        print(f"  initial stack pointer (top of RAM): 0x{sp:08x}")
-                    if reset is not None:
-                        print(f"  reset vector (ROM entry): 0x{reset & ~1:08x}")
+            if 0 in words:
+                sp, reset = parse_vector_table(words[0] + words.get(4, b""))
+                print(f"Candidate initial stack pointer: 0x{sp:08x}")
+                if reset is not None:
+                    print(f"Candidate reset handler: 0x{reset & ~1:08x}; Thumb bit: {reset & 1}")
         print("Diagnostic complete.")
         return 0
     except RuntimeError as error:
