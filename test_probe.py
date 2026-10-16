@@ -136,5 +136,18 @@ class DescriptorScanTests(unittest.TestCase):
         self.assertIsNone(probe.find_patch_base(b"\x11" * 64, 0x00210000, probe.USB_VID_PID_SIGNATURE))
 
 
+class MapMemoryTests(unittest.TestCase):
+    def test_coalesce_runs_merges_consecutive_kinds(self):
+        samples = [(0x0, "zero"), (0x1000, "zero"), (0x2000, "data"),
+                   (0x3000, "data"), (0x4000, "zero")]
+        self.assertEqual(
+            probe.coalesce_runs(samples),
+            [(0x0, 0x1000, "zero"), (0x2000, 0x3000, "data"), (0x4000, 0x4000, "zero")],
+        )
+
+    def test_coalesce_runs_empty(self):
+        self.assertEqual(probe.coalesce_runs([]), [])
+
+
 if __name__ == '__main__':
     unittest.main()

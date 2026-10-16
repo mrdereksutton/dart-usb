@@ -73,7 +73,15 @@ To locate where the controller keeps its own USB identity — the gate for wheth
 python3 bt600_probe.py --find-descriptor
 ```
 
-This scans memory, read-only, for the little-endian `0b05:1d70` vendor/product bytes (`05 0b 70 1d`) as they appear inside a USB device descriptor. It defaults to `0x00210000` for `16384` words and accepts an explicit `START WORDS`; it stops on the first failed read and prints a context window around any hit. A match in writable RAM means the dongle's USB identity can likely be changed; a signature found only in locked ROM, or not at all, argues the dongle should be the radio while the USB persona runs elsewhere. It does not write memory and does not read `0x0880a0a8`.
+This scans memory, read-only, for the little-endian `0b05:1d70` vendor/product bytes (`05 0b 70 1d`) as they appear inside a USB device descriptor. It defaults to `0x00210000` for `16384` words and accepts an explicit `START WORDS`; it stops on the first failed read and prints a context window around any hit. A match in writable RAM means the dongle's USB identity can likely be changed; a signature found only in locked ROM, or not at all, argues the dongle should be the radio while the USB persona runs elsewhere. It does not write memory and does not read `0x0880a0a8`. On 2026-10-16 the signature was **not** found in `0x00210000..0x00220000`, so the descriptor is not in that live-RAM window.
+
+To see where readable memory actually lives before scanning further:
+
+```bash
+python3 bt600_probe.py --map-memory
+```
+
+This samples one word per 4 KB page across `0x0..0x400000` and prints coalesced `zero` / `data` / `fault` regions, read-only, stopping cleanly if a page blocks. It shows the RAM extent and whether `fc61` reaches ROM at all, which bounds where the descriptor could be and whether it is reachable by this read path.
 
 The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
 

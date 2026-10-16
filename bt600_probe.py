@@ -209,12 +209,26 @@ def read_memory_range(command, start, words):
     return bytes(blob)
 
 
+def coalesce_runs(samples):
+    """Merge consecutive equal-kind (address, kind) samples into regions,
+    returning [(start, last, kind)] so a page sweep prints a few lines."""
+    runs = []
+    for address, kind in samples:
+        if runs and runs[-1][2] == kind:
+            runs[-1] = (runs[-1][0], address, kind)
+        else:
+            runs.append((address, address, kind))
+    return runs
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
     parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
     parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
                         help="Read 1..256 four-byte words within candidate RAM page 0x00217000..0x00217fff")
+    parser.add_argument("--map-memory", action="store_true",
+                        help="Sample one word per 4 KB page over 0x0..0x400000 and report readable regions, read-only")
     parser.add_argument("--find-descriptor", nargs="*", metavar="ARG",
                         help="Scan memory for the 0b05:1d70 USB signature, read-only; optional START WORDS (default 0x00210000 16384)")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
@@ -386,6 +400,21 @@ def main():
                 require_stock_version(after, expected_version)
                 print("Stock patch is running.")
             keep_configuration = True
+        if args.map_memory:
+            map_start, map_end, map_step = 0x00000000, 0x00400000, 0x1000
+            print(f"Mapping 0x{map_start:08x}..0x{map_end:08x}, one word per 0x{map_step:x}, read-only", flush=True)
+            samples = []
+            for address in range(map_start, map_end, map_step):
+                try:
+                    data = read_memory_word(command, address, quiet=True)
+                except RuntimeError as error:
+                    print(f"Stopped at 0x{address:08x}: {error}")
+                    samples.append((address, "fault"))
+                    break
+                samples.append((address, "zero" if data == b"\x00\x00\x00\x00" else "data"))
+            print("Readable regions (one word per page):")
+            for region_start, region_last, kind in coalesce_runs(samples):
+                print(f"  0x{region_start:08x}..0x{region_last:08x}  {kind}")
         if args.read_range:
             if len(rom) < 2 or rom[0] != 0:
                 raise RuntimeError("No ROM version returned; no memory range was read")
