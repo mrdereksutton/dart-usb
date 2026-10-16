@@ -76,7 +76,7 @@ So the controller exposes full RAM read and write plus a launching firmware-down
 - Which changes survive USB reconfiguration and complete power loss.
 - The car's supported USB/iPod protocol details needed for a working bridge.
 
-## Latest handoff evidence and pending targeted read
+## Latest handoff evidence and completed targeted read
 
 The supplied 2026-10-16 Terminal record contains:
 
@@ -92,7 +92,7 @@ configuration was zero and the probe restored that unconfigured state.
 The original JSON is preserved locally under
 `results/handoff-2026-10-16/last_successful_probe.json`.
 
-The prepared `bt600_vendor_read.py --descriptor-targets` result is still pending.
+The prepared `bt600_vendor_read.py --descriptor-targets` run was completed at 23:16 UTC; see the measured result below.
 It reads the firmware-derived pointer at `0x002c10b4`, conditionally follows it
 for an 18-byte template descriptor, and reads VID/PID settings at `0x002808b8`.
 It also captures standard GET_DESCRIPTOR for comparison. No new memory read,
@@ -104,3 +104,37 @@ in efuse/config. The saved stock-upload transcript's obsolete `stock_running:
 false`/exit 3 reflects the fixed version-comparison bug; its raw acknowledgments
 and changed runtime version remain the observations. The failed
 `descriptor-20261016T095759.183191Z` run has no completed descriptor/RAM capture.
+
+
+### Direct Codex run — 2026-10-16 23:16:55 UTC (7:16 p.m. EDT)
+
+The sandboxed command saw zero devices and sent no HCI queries. Rerunning the
+same command through approved `require_escalated` execution succeeded. Normal
+Terminal is no longer required for this session's approved hardware access.
+No OS setting or driver attachment was changed.
+
+Command: `python3 bt600_vendor_read.py --descriptor-targets`.
+Result: `results/bt600-targets-20261016T231655.391813Z.json` (exit 0).
+Probe SHA-256: `d6678851838513d2c47c9c9b344ae9ed8d261acae12256c15d760514445b6cc0`.
+Identity replies matched the handoff: runtime `0x000e8761`, ROM 1, key ID zero.
+
+| Read | HCI return parameters | Interpretation |
+| --- | --- | --- |
+| `0x002c10b4` | `00 07 00 00 00` | Word `0x00000007`; invalid candidate pointer, not followed |
+| `0x002808b8` | `00 05 0b 70 1d` | Settings word contains VID/PID `0b05:1d70` |
+
+Standard device descriptor from EP0:
+
+```text
+12 01 10 01 e0 01 01 40 05 0b 70 1d 00 02 01 02 00 01
+```
+
+Decoded: USB version `0x0110`, Bluetooth class `e0/01/01`, EP0 packet size 64,
+device revision `0x0200`, manufacturer/product string indexes 1/2, no serial
+string, one configuration. Original USB configuration zero was restored.
+Exactly two memory words were read; no descriptor-pointer target was touched.
+
+The VID/PID settings location matches, while the candidate descriptor template
+location does not contain a usable pointer in this runtime. This is a layout
+mismatch to investigate, not a failure of RAM access or a verdict on USB
+repurposing. No memory write, firmware upload, reset, or car test was performed.

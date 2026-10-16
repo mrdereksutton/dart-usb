@@ -1,11 +1,11 @@
 # Dart USB — ASUS USB-BT600 / RTL8761C research
 
-Current continuation: the next hardware command is
-`python3 bt600_vendor_read.py --descriptor-targets` from normal macOS Terminal.
-It saves `results/bt600-targets-*.json` and compares a bounded ASUS-derived
-memory candidate with standard GET_DESCRIPTOR. Read [CLAUDE.md](CLAUDE.md) and
-[FIRMWARE.md](FIRMWARE.md#full-asus-rtbtcore-image--2026-10-16-continuation) first;
-the completed RAM/write/stock-upload experiments do not need repeating.
+Current continuation: the bounded descriptor-target read has completed.
+The candidate pointer at `0x002c10b4` returned `0x00000007` (not followed), while
+`0x002808b8` contains the expected VID/PID. Codex accessed the dongle through an
+approved execution outside the command sandbox. Read [CLAUDE.md](CLAUDE.md),
+[HARDWARE.md](HARDWARE.md), and [FIRMWARE.md](FIRMWARE.md) before another
+experiment; the next work is reconciling the live descriptor layout.
 
 
 Open-source tools and hardware research toward a **standalone Bluetooth-to-USB/iPod audio bridge**, using an ASUS USB-BT600 and a 2016 Dodge Dart with the stock 8.4-inch Uconnect system.

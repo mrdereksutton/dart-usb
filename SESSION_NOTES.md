@@ -1,5 +1,26 @@
 # Session notes — 2026-10-16
 
+## Hardware continuation — 23:16 UTC / 7:16 p.m. EDT
+
+The pending descriptor-target run completed directly from Codex after approving
+execution outside the command sandbox. The sandboxed attempt saw zero devices;
+the approved attempt exited 0 and restored configuration zero. Future agents
+should use that approved execution path before asking the owner to run Terminal.
+
+Saved result: `results/bt600-targets-20261016T231655.391813Z.json`.
+`0x002c10b4` returned `07 00 00 00` (not a pointer, not followed).
+`0x002808b8` returned `05 0b 70 1d` (expected settings VID/PID).
+Standard GET_DESCRIPTOR: `12 01 10 01 e0 01 01 40 05 0b 70 1d 00 02 01 02 00 01`.
+Identity remains runtime `0x000e8761`, ROM 1, key ID zero. No writes/uploads.
+
+This supersedes the pending-run instructions below. The next work is reconciling
+the running firmware's global layout with the ASUS image: settings match, the
+template pointer does not. Do not rerun the completed probe or follow the
+additional offline context chain without reviewing this mismatch. This update
+changes documentation only; `git diff --check` passes and the preceding 56-test
+code validation remains applicable.
+
+
 ## Codex continuation: ASUS descriptor targets and EP0 copy
 
 Continued from the 2026-10-16 ZIP handoff on focused branch

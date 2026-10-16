@@ -226,3 +226,19 @@ builds the nine-byte header and appends per-function descriptors through
 `0x02189720`. This gives a specific next offline target for the UAC1/HID persona.
 The 192-byte/ms audio endpoint capacity, A2DP/AVRCP stack, and persistent boot
 implementation remain unresolved.
+
+
+### Live result qualifying this map
+
+The 23:16 UTC targeted read returned word `0x00000007` at `0x002c10b4`, and
+`05 0b 70 1d` at `0x002808b8`. The former was not followed. Standard EP0
+reported USB `0x0110`, class `e0/01/01`, VID/PID `0b05:1d70`. See HARDWARE.md
+for exact bytes and saved result. The probe ran with the original `0x000e8761`
+runtime and ROM 1; the full ASUS image has never been uploaded.
+
+The matching identity settings support that specific address calculation, but
+not the whole application-global map. The template pointer and active-copy
+context chain remain unlocated in the running firmware. Next analyze differences
+between the installed runtime and the downloadable application's initialization
+and global layout before preparing another narrowly justified read. Do not
+interpret the value 7 as a pointer or edit it.
