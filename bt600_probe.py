@@ -254,7 +254,7 @@ def coalesce_runs(samples):
     return runs
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
     parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
@@ -268,8 +268,24 @@ def main():
                         help="Scan START..+WORDS for the resident stock patch prologue (run after --load-stock), read-only")
     parser.add_argument("--write-test", nargs="?", const="0x00210000", metavar="ADDR",
                         help="Probe memory write: read/flip/verify/restore one word at ADDR (default 0x00210000)")
+    parser.add_argument("--capture-usb-ram", metavar="OUTPUT",
+                        help="Save live USB descriptors and a RAM dump under OUTPUT, then search descriptor structures")
+    parser.add_argument("--capture-range", nargs=2, metavar=("START", "WORDS"),
+                        help="Optional subset of 0x00210000..0x0021ffff for --capture-usb-ram")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.capture_usb_ram:
+        if (args.load_stock or args.probe_memory or args.read_range or args.map_memory
+                or args.find_descriptor is not None or args.find_patch
+                or args.write_test is not None or args.inspect_stock):
+            parser.error("--capture-usb-ram runs alone; use a separate command for other probe modes")
+        from descriptor_capture import validate_range
+        try:
+            args.capture_range = validate_range(*(int(value, 0) for value in (args.capture_range or ("0x00210000", "16384"))))
+        except ValueError as error:
+            parser.error(str(error))
+    elif args.capture_range:
+        parser.error("--capture-range requires --capture-usb-ram")
     if args.find_patch:
         try:
             start, words = (int(value, 0) for value in args.find_patch)
@@ -425,6 +441,22 @@ def main():
             print(f"Realtek ROM version: {rom[1]} (patch chip ID {rom[1] + 1})")
         else:
             print("The ROM-version query was not accepted; the local-version result above is still useful.")
+        if args.capture_usb_ram:
+            if maker != 0x005D or hci_version != 0x0E or len(rom) != 2 or rom != b"\x00\x01":
+                raise RuntimeError("The controller does not match this ROM-1 BT600 capture")
+
+            def get_descriptor(kind, index, length):
+                buffer = C.create_string_buffer(length)
+                actual = checked(usb.libusb_control_transfer(
+                    handle, 0x80, 0x06, (kind << 8) | index, 0, buffer, length, 2000,
+                ), f"Read live USB descriptor {kind}:{index}")
+                return buffer.raw[:actual]
+
+            from descriptor_capture import capture
+            capture(lambda address: read_memory_word(command, address, quiet=True),
+                    get_descriptor, args.capture_usb_ram, *args.capture_range,
+                    metadata={"local_version_hex": version.hex(" "), "rom_version_hex": rom.hex(" "),
+                              "original_usb_configuration": configuration.value})
         if args.load_stock:
             if len(rom) < 2 or rom[0] != 0:
                 raise RuntimeError("No ROM version returned; no firmware was sent")

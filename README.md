@@ -11,6 +11,7 @@ The current work is identifying how the RTL8761C controller loads code, accesses
 - [FIRMWARE.md](FIRMWARE.md): stock image layout, sources, and the ARM disassembly question.
 - [bt600_probe.py](bt600_probe.py): the working version probe and experimental upload/read options.
 - [USB_BRIDGE.md](USB_BRIDGE.md): USB audio/iAP implementation references and the hardware work needed to port them.
+- [IPOD_REFERENCE.md](IPOD_REFERENCE.md): use the owner's iPod Classic as a USB/car reference.
 
 ## Run the probe
 
@@ -42,15 +43,55 @@ python3 -m unittest -v test_probe.py
 
 ## Next hardware experiment
 
-Run the complete sequence from normal macOS Terminal:
+Capture the actual USB descriptors and one RAM image from normal macOS Terminal:
 
 ```bash
-python3 run_bt600_experiment.py
+python3 run_descriptor_experiment.py
 ```
 
-It collects a baseline, uploads the matching stock host-loaded patch, checks the resulting version, and reads the RAM address that answered on this dongle. It saves timestamped text and JSON output in `results/`, which is excluded from Git. Any failed phase stops the sequence. Use `--read-only` to collect only the baseline and the RAM query.
+This reads the live device and configuration descriptors over EP0, then saves
+the same `0x00210000..0x0021ffff` RAM window previously scanned by Claude.
+It searches for full descriptors, the device header, and individual configuration,
+interface, and endpoint records in four word layouts. Interface/endpoint searches
+can find USB structures even when the vendor/product bytes are absent.
 
-The chat process cannot open raw USB; normal Terminal has already queried this dongle successfully. The saved results can be read locally without copying Terminal output into chat.
+Each run creates `results/descriptor-TIMESTAMP/` with `ram.bin`, raw descriptor
+`.bin` files, `capture.json`, `run.json`, and `transcript.txt`. A failed read stops
+immediately and preserves completed words. A Ctrl-C interruption also saves them.
+Progress is printed every KiB. There is no firmware upload, memory write, reset,
+or kernel-driver detach in this command. It works with the current ROM or already
+loaded stock patch and records which version answered.
+
+Analyze that same dump again without touching the dongle:
+
+```bash
+python3 descriptor_capture.py results/descriptor-TIMESTAMP
+```
+
+Matches identify a four-byte read address and a byte offset in the named layout;
+`capture.json` includes the surrounding bytes. Use those addresses to inspect the
+USB data path before choosing a descriptor edit. A search with no matches means
+those structures were absent from the captured window at that time.
+
+The chat process cannot open raw USB; normal Terminal can. Saved results can be
+read locally without copying Terminal output into chat. Raw captures are excluded
+from Git.
+
+The owner also has an iPod Classic. With it connected to the Mac in normal mode:
+
+```bash
+python3 capture_ipod.py
+```
+
+This finds a USB product named iPod, captures its device descriptor and every
+advertised configuration, and saves a readable interface/endpoint table plus raw
+bytes under `results/ipod-TIMESTAMP-N/`. It uses standard descriptor requests;
+it does not claim interfaces, change configuration, access the music disk, sync,
+or send iAP commands. See [IPOD_REFERENCE.md](IPOD_REFERENCE.md) for the car comparison.
+
+The earlier `run_bt600_experiment.py` remains available for baseline/upload/RAM
+diagnostics. Those capabilities have already answered on hardware; the next step
+is the saved descriptor/RAM capture above.
 
 Individual upload command:
 
@@ -58,9 +99,9 @@ Individual upload command:
 python3 bt600_probe.py --load-stock
 ```
 
-This sends the stock RTL8761CU driver patch selected for the detected ROM and reads the version back. For this dongle, ROM version 1 selects chip ID 2. The target version is `0x4618d3f3`.
+This sends the stock RTL8761CU driver patch selected for the detected ROM and reads the version back. For this dongle, ROM version 1 selects chip ID 2. The container version is `0x4618d3f3`; the running version observed after upload is `0x7bf15762`.
 
-The upload mode has been assembled and tested offline; it has not yet been run on the dongle. It leaves USB configuration 1 active after a successful upload so a second probe can query the running patch.
+Both fragments were acknowledged and the running version changed on the actual dongle. This command leaves USB configuration 1 active after a successful upload so a second probe can query the running patch. The descriptor capture does not need another upload.
 
 An additional experiment tests whether the C chip accepts the B family's memory-read command:
 
@@ -84,7 +125,7 @@ To locate where the controller keeps its own USB identity — the gate for wheth
 python3 bt600_probe.py --find-descriptor
 ```
 
-This scans memory, read-only, for the little-endian `0b05:1d70` vendor/product bytes (`05 0b 70 1d`) as they appear inside a USB device descriptor. It defaults to `0x00210000` for `16384` words and accepts an explicit `START WORDS`; it stops on the first failed read and prints a context window around any hit. A match in writable RAM means the dongle's USB identity can likely be changed; a signature found only in locked ROM, or not at all, argues the dongle should be the radio while the USB persona runs elsewhere. It does not write memory and does not read `0x0880a0a8`. On 2026-10-16 the signature was **not** found in `0x00210000..0x00220000`, so the descriptor is not in that live-RAM window.
+This older mode searches four byte arrangements of the `0b05:1d70` vendor/product bytes. It defaults to `0x00210000` for `16384` words and accepts an explicit `START WORDS`; it stops on the first failed read and prints a context window around any hit. It does not write memory and does not read `0x0880a0a8`. On 2026-10-16 the signature was absent from that RAM window. The newer capture searches configuration/interface/endpoint structures as well and saves the memory for further analysis.
 
 To see where readable memory actually lives before scanning further:
 
@@ -94,7 +135,7 @@ python3 bt600_probe.py --map-memory
 
 This samples one word per 4 KB page across `0x0..0x400000` and prints coalesced `zero` / `data` / `fault` regions, read-only, stopping cleanly if a page blocks. It shows the RAM extent and whether `fc61` reaches ROM at all, which bounds where the descriptor could be and whether it is reachable by this read path.
 
-The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
+The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and checks that the running version changes after upload. Run the offline suite with `python3 -m unittest -v`.
 
 ## Firmware provenance
 

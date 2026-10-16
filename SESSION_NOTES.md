@@ -1,5 +1,28 @@
 # Session notes — 2026-10-16
 
+## Prepared continuation: descriptor/RAM capture and iPod Classic reference
+
+The owner has an iPod Classic available as a reference. Two commands are now
+prepared in this branch; their new capture output is still to be collected from
+normal macOS Terminal:
+
+- `python3 run_descriptor_experiment.py`: save the BT600's live device and
+  configuration descriptors and one `0x00210000..0x0021ffff` RAM dump. Search
+  complete descriptors and interface/endpoint records, preserving all matches
+  and partial reads. No stock upload or memory-write retest is involved.
+- `python3 capture_ipod.py`: save the iPod's device descriptor and every
+  advertised configuration, with interface alternate settings and endpoint
+  summaries. Standard read-only USB requests; no disk access or iAP commands.
+
+Read results under `results/descriptor-*/` and `results/ipod-*/`. Reanalyze saved
+RAM offline with `python3 descriptor_capture.py CAPTURE_DIRECTORY`. See
+`IPOD_REFERENCE.md` for the iPod-to-Uconnect comparison and `CLAUDE.md` for the
+current task. Offline regression checks cover unaligned/word-swapped matches,
+USB read failures and interruptions, read-range limits, multi-configuration iPod
+references, and USB string language selection.
+
+The earlier session record follows.
+
 Handoff for the RTL8761CU (ASUS USB-BT600, `0b05:1d70`) work. All hardware
 runs were done by the user from macOS Terminal and pasted back.
 

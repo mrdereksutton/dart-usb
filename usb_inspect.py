@@ -52,6 +52,7 @@ def parse_config(blob):
         if kind == 0x04 and i + 8 <= len(blob):  # interface descriptor
             interfaces.append({
                 "number": blob[i + 2], "class": blob[i + 5],
+                "alternate": blob[i + 3],
                 "subclass": blob[i + 6], "protocol": blob[i + 7],
                 "report_len": 0, "endpoints": [],
             })
@@ -139,10 +140,10 @@ def load_libusb():
     return usb
 
 
-def get_descriptor(usb, handle, desc_type, index, length):
+def get_descriptor(usb, handle, desc_type, index, length, language=0):
     buf = C.create_string_buffer(length)
     n = usb.libusb_control_transfer(
-        handle, 0x80, 0x06, (desc_type << 8) | index, 0, buf, length, 1000)
+        handle, 0x80, 0x06, (desc_type << 8) | index, language, buf, length, 1000)
     return buf.raw[:n] if n > 0 else b""
 
 
@@ -158,7 +159,11 @@ def get_report_descriptor(usb, handle, interface, length):
 def read_string(usb, handle, index):
     if not index:
         return ""
-    raw = get_descriptor(usb, handle, 0x03, index, 255)
+    languages = get_descriptor(usb, handle, 0x03, 0, 255)
+    if len(languages) < 4 or languages[1] != 3:
+        return ""
+    language = int.from_bytes(languages[2:4], "little")
+    raw = get_descriptor(usb, handle, 0x03, index, 255, language=language)
     if len(raw) < 2:
         return ""
     try:
