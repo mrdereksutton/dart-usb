@@ -93,5 +93,16 @@ class HCIResponseTests(unittest.TestCase):
                 probe.require_download_ack(response, 0x81)
 
 
+class ReadRangeTests(unittest.TestCase):
+    def test_find_patch_base_locates_the_resident_prologue(self):
+        needle = probe.stock_payload(1)[2][:16]
+        blob = b"\x00" * 8 + needle + b"\xff" * 4
+        self.assertEqual(probe.find_patch_base(blob, 0x00217000, needle), 0x00217008)
+
+    def test_find_patch_base_absent_returns_none(self):
+        needle = probe.stock_payload(1)[2][:16]
+        self.assertIsNone(probe.find_patch_base(b"\x00" * 64, 0x00217000, needle))
+
+
 if __name__ == '__main__':
     unittest.main()

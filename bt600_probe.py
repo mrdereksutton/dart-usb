@@ -6,7 +6,8 @@ HCI Read Local Version Information (0x1001), and Realtek Read ROM Version
 (0xFC6D). Default mode does not download firmware. --load-stock sends the
 stock linux-firmware RTL8761CU driver patch for the detected ROM revision.
 --probe-memory additionally queries two boot-vector words and two patch literals.
-Neither mode resets the controller or detaches a kernel driver.
+--read-range START WORDS dumps a span of live memory, read-only. Neither mode
+resets the controller or detaches a kernel driver.
 If the device is unconfigured, configuration 1 is selected for the query and
 the original unconfigured state is restored on exit.
 """
@@ -164,10 +165,26 @@ def require_download_ack(response, index):
         raise RuntimeError(f"Download fragment {index:02x} got an acknowledgement for {response[1]:02x}")
 
 
+def find_patch_base(blob, start, needle):
+    """Return the absolute address where `needle` first appears in a memory
+    dump that began at `start`, or None. Used to locate the chip-2 patch once
+    it is resident in RAM, which pins the controller's real load base."""
+    index = bytes(blob).find(bytes(needle))
+    return None if index < 0 else start + index
+
+
+def hexdump(blob, start, width=16):
+    for offset in range(0, len(blob), width):
+        row = blob[offset:offset + width]
+        print(f"  0x{start + offset:08x}  {row.hex(' ')}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
     parser.add_argument("--probe-memory", action="store_true", help="Query both candidate boot-vector words and two patch literals")
+    parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
+                        help="Read WORDS four-byte words from START (hex/dec), read-only; maps live memory")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
     if args.inspect_stock:
@@ -256,7 +273,7 @@ def main():
 
         events = HCIEvents()
 
-        def command(opcode, parameters=b""):
+        def command(opcode, parameters=b"", quiet=False):
             if len(parameters) > 255:
                 raise RuntimeError("HCI command parameters exceed 255 bytes")
             payload = struct.pack("<HB", opcode, len(parameters)) + parameters
@@ -282,7 +299,8 @@ def main():
                     if result is not None:
                         matching = result
                 if matching is not None:
-                    print(f"HCI {opcode:04x} response:", matching.hex(" "))
+                    if not quiet:
+                        print(f"HCI {opcode:04x} response:", matching.hex(" "))
                     return matching
             raise RuntimeError(f"No matching response for query {opcode:04x}")
 
@@ -318,6 +336,34 @@ def main():
                 require_stock_version(after, expected_version)
                 print("Stock patch is running.")
             keep_configuration = True
+        if args.read_range:
+            start = int(args.read_range[0], 0)
+            words = int(args.read_range[1], 0)
+            print(f"Reading {words} four-byte words from 0x{start:08x} (read-only)", flush=True)
+            blob = bytearray()
+            for i in range(words):
+                address = start + 4 * i
+                try:
+                    result = command(MEMORY_READ_OPCODE, struct.pack("<BI", MEMORY_READ_ACCESS, address), quiet=True)
+                except RuntimeError as error:
+                    print(f"Stopped at 0x{address:08x}: {error}")
+                    break
+                if len(result) == 5 and result[0] == 0:
+                    blob += result[1:]
+                else:
+                    state = f"status 0x{result[0]:02x}" if result else "empty response"
+                    print(f"Read at 0x{address:08x} returned {state}; stopping.")
+                    break
+            print(f"Collected {len(blob)} bytes from 0x{start:08x}:")
+            hexdump(blob, start)
+            if blob and not any(blob):
+                print("Range is all zero: outside readable memory, or not yet initialized.")
+            # Once --load-stock has made the chip-2 patch resident, its prologue
+            # appears in RAM; the address where it lands is the real load base.
+            prologue = stock_payload(1)[2][:16]
+            base = find_patch_base(blob, start, prologue)
+            if base is not None:
+                print(f"Chip-2 patch prologue found: controller load base = 0x{base:08x}")
         if args.probe_memory:
             words = {}
             for address, label in MEMORY_PROBE_ADDRESSES:

@@ -59,6 +59,16 @@ python3 bt600_probe.py --probe-memory
 
 That option queries candidate boot-vector words at `0x0` and `0x4`, then the two addresses found in the C-chip patch. Each `0xfc61` query requests four bytes, so the reset vector needs its own read. The C controller's reply determines whether this command is available. It does not write memory.
 
+On this dongle, `0xfc61` works: `0x00217e88` returned live data and `0x0` read back as zero. Reading `0x0880a0a8` hung the controller, so that peripheral/flash window is excluded from routine reads.
+
+To map a span of live memory, read-only:
+
+```bash
+python3 bt600_probe.py --read-range 0x00217e88 64
+```
+
+This dumps `WORDS` four-byte words from `START` (both hex or decimal) and stops on the first rejected or timed-out read. Once `--load-stock` has made the chip-2 patch resident, a `--read-range` sweep of the `0x0021xxxx` region locates the patch's prologue, and the address where it appears is the controller's real load base. It does not write memory, and it does not read `0x0880a0a8`.
+
 The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
 
 ## Firmware provenance
