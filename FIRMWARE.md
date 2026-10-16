@@ -38,6 +38,20 @@ The user's ROM version 1 selects entry 2. Linux `btrtl.c` copies the first `patc
 
 HCI opcode `0xfc20` sends the fragments. The first parameter byte is the fragment index; bit 7 marks the final fragment. The code also preserves Linux's extra final fragment when the total length is exactly divisible by 252.
 
+## Upload result on hardware: the download launches
+
+On 2026-10-16 the stock chip-2 patch was uploaded to the dongle. Both fragments were acknowledged (`0xfc20` returned `00 00` then `00 81`), and `0x1001` Read Local Version afterward returned a running version of `0x7bf15762`, changed from the ROM's `0x000e8761`.
+
+An earlier check treated this as a failure because it expected the container `fw_version` `0x4618d3f3`. That expectation was wrong. Confirmed against Linux `btrtl.c` (`rtl_download_firmware` → `btrtl_read_local_version`):
+
+- The driver sends **no HCI Reset** after the fragments; the controller relaunches on the final fragment. Our flow matches it.
+- The post-download version is **re-read and only logged**; `btrtl` never compares it to any expected value. The container `fw_version` is written into the download buffer's last four bytes but is used otherwise only in the crashdump header, not as a reported version.
+- There is no defined "correct" post-patch `lmp_subversion`/`hci_rev`.
+
+Offline dissection of the embedded image confirms the payload is framed correctly: the chip-2 patch already ends in `f3 d3 18 46` (= `0x4618d3f3`), so the version substitution is a no-op, and the 263-byte payload places the version and the 11-byte config exactly where `btrtl` does. `0x7bf15762` appears nowhere in the image, so it is a value the running patch reports, not an echo of uploaded bytes.
+
+Conclusion: the `0xfc20` download path works on this C chip and the controller launches the downloaded firmware. The success signal is that the running version changes from the pre-download value; the probe now checks for that change rather than a fixed value. This is the foundation for loading a custom patch; it does not by itself prove the patch does useful work beyond relaunching.
+
 ## ARM code and the next question
 
 The disassembly is in `rtl8761cu_patch_disassembly.txt`. It uses ARM Thumb instructions, consistent with Realtek's C-chip datasheet.

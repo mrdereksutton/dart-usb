@@ -161,14 +161,24 @@ def command_result(event, opcode):
     return None
 
 
-def require_stock_version(response, expected):
+def require_stock_version(response, before):
+    # btrtl.c never checks the post-download version against a fixed value; it
+    # re-reads it and only logs it (rtl_download_firmware -> btrtl_read_local_
+    # version), and sends no HCI Reset -- the controller relaunches on the
+    # final fragment. The epatch container fw_version is written into the
+    # download buffer but is not an expected reported value. So the success
+    # signal is that the running version changed from the pre-download value,
+    # not that it equals the container version (which this C chip does not
+    # report back).
     if len(response) != 9 or response[0] != 0:
         raise RuntimeError("No successful version response after upload")
     _, _, revision, _, maker, subversion = struct.unpack("<BBHBHH", response)
     observed = (revision << 16) | subversion
-    print(f"Version after upload: 0x{observed:08x}; expected: 0x{expected:08x}")
-    if maker != 0x005D or observed != expected:
-        raise RuntimeError("Download was acknowledged but the expected stock patch is not running")
+    print(f"Running version after upload: 0x{observed:08x} (was 0x{before:08x})")
+    if maker != 0x005D:
+        raise RuntimeError("Controller manufacturer changed unexpectedly after upload")
+    if observed == before:
+        raise RuntimeError("Download was acknowledged but the running version did not change; the patch did not launch")
 
 
 def require_download_ack(response, index):
@@ -405,8 +415,8 @@ def main():
                     response = command(0xFC20, fragment)
                     require_download_ack(response, fragment[0])
                 after = command(0x1001)
-                require_stock_version(after, expected_version)
-                print("Stock patch is running.")
+                require_stock_version(after, current_version)
+                print("Patch launched: the running firmware version changed after download.")
             keep_configuration = True
         if args.map_memory:
             map_start, map_end, map_step = 0x00000000, 0x00400000, 0x1000

@@ -78,13 +78,16 @@ class HCIResponseTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(RuntimeError):
                 probe.command_result(event, 0xFC6D)
 
-    def test_stock_upload_must_change_to_expected_version(self):
-        before = bytes.fromhex("00 0e 0e 00 0e 5d 00 61 87")
-        after = struct.pack("<BBHBHH", 0, 0x0E, 0x4618, 0x0E, 0x005D, 0xD3F3)
+    def test_stock_upload_requires_the_running_version_to_change(self):
+        # btrtl only logs the post-download version, so success is a change
+        # from the pre-download value, not a match to the container version.
+        before = 0x000E8761
+        unchanged = bytes.fromhex("00 0e 0e 00 0e 5d 00 61 87")  # still 0x000e8761
+        changed = struct.pack("<BBHBHH", 0, 0x0E, 0x7BF1, 0x0E, 0x005D, 0x5762)  # 0x7bf15762
         with patch("builtins.print"):
-            with self.assertRaisesRegex(RuntimeError, "expected stock patch is not running"):
-                probe.require_stock_version(before, 0x4618D3F3)
-            probe.require_stock_version(after, 0x4618D3F3)
+            with self.assertRaisesRegex(RuntimeError, "did not change"):
+                probe.require_stock_version(unchanged, before)
+            probe.require_stock_version(changed, before)  # observed on hardware; no raise
 
     def test_acknowledgement_must_match_the_fragment(self):
         probe.require_download_ack(b"\x00\x00", 0)
