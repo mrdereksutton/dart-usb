@@ -70,6 +70,10 @@ The `0xfc61` query format was checked against the research project's `RTL8761B_u
 
 The probe incorporates PR #1's boot-vector idea, with a separate query at `0x4`: a four-byte read at `0x0` only returns the candidate initial stack pointer, never the reset vector. Values at zero and four are interpreted as candidate boot vectors; a relocated vector table, boot-memory alias, or dummy response still needs to be distinguished using subsequent reads. Initial SP is a stack address, not necessarily the physical top of all RAM; the reset handler is a code pointer, not necessarily a ROM address.
 
+### Hardware result superseding the candidate reads
+
+The 05:29 UTC Terminal run returned four zeroes at both zero and four, and `b4 88 3b c2` at `0x00217e88`. The read at `0x0880a0a8` then timed out; USB cleanup failed and the adapter disappeared from enumeration before any firmware upload. Treating that literal as a readable flash address was premature. It has been removed from the probe. The normal memory query now uses only the RAM address that answered; see `HARDWARE.md`. The stock upload is now attempted before the RAM query.
+
 ## Persistence lead
 
 Realtek's datasheet lists an ARMv8M Real-M300 core and shows ROM/RAM/FLASH. It documents `Program_RX` and `Program_TX` on pins 19 and 20 as a UART flash-programming interface. The amount/layout of usable flash and the programming path exposed by the ASUS board are the next hardware questions.

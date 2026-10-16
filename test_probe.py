@@ -1,7 +1,9 @@
 import base64
+import contextlib
+import io
 import struct
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import bt600_probe as probe
 
@@ -42,9 +44,9 @@ class StockPatchTests(unittest.TestCase):
 
 
 class MemoryProbeTests(unittest.TestCase):
-    def test_four_byte_queries_cover_both_boot_vector_words(self):
+    def test_default_probe_excludes_the_address_that_disconnected_usb(self):
         addresses = [address for address, _ in probe.MEMORY_PROBE_ADDRESSES]
-        self.assertEqual(addresses[:2], [0, 4])
+        self.assertEqual(addresses, [0x00217E88])
         words = {0: struct.pack("<I", 0x0021A400), 4: struct.pack("<I", 0x00001291)}
         sp, reset = probe.parse_vector_table(words[0] + words[4])
         self.assertEqual((sp, reset & ~1, reset & 1), (0x0021A400, 0x1290, 1))
@@ -102,6 +104,23 @@ class ReadRangeTests(unittest.TestCase):
     def test_find_patch_base_absent_returns_none(self):
         needle = probe.stock_payload(1)[2][:16]
         self.assertIsNone(probe.find_patch_base(b"\x00" * 64, 0x00217000, needle))
+
+    def test_range_rejects_failed_window_and_page_crossings_before_sending(self):
+        for start, words in ((0x0880A0A8, 1), (0x217E88, 0), (0x217E88, -1),
+                             (0x217E88, 257), (0x217E89, 1), (0x217FFC, 2), (0xFFFFFFFF, 2)):
+            command = Mock()
+            with self.subTest(start=start, words=words), self.assertRaises(ValueError):
+                probe.read_memory_range(command, start, words)
+            command.assert_not_called()
+
+    def test_failed_word_stops_reads_and_keeps_completed_output(self):
+        for failure in (RuntimeError("USB timeout"), b"\x01", b"\x00\x11"):
+            command = Mock(side_effect=[b"\x00\xb4\x88\x3b\xc2", failure])
+            output = io.StringIO()
+            with self.subTest(failure=failure), contextlib.redirect_stdout(output), self.assertRaises(RuntimeError):
+                probe.read_memory_range(command, 0x217E88, 3)
+            self.assertEqual(command.call_count, 2)
+            self.assertIn("Memory 0x00217e88: b4 88 3b c2", output.getvalue())
 
 
 if __name__ == '__main__':

@@ -37,7 +37,7 @@ Run the complete sequence from normal macOS Terminal:
 python3 run_bt600_experiment.py
 ```
 
-It collects a baseline, tries the memory queries, uploads the matching stock host-loaded patch, and repeats the version and memory queries. It saves timestamped text and JSON output in `results/`, which is excluded from Git. A failed basic probe or upload stops the sequence. An unsupported memory-read command is recorded and does not skip the independent upload test. Use `--read-only` to collect only the baseline and memory queries.
+It collects a baseline, uploads the matching stock host-loaded patch, checks the resulting version, and reads the RAM address that answered on this dongle. It saves timestamped text and JSON output in `results/`, which is excluded from Git. Any failed phase stops the sequence. Use `--read-only` to collect only the baseline and the RAM query.
 
 The chat process cannot open raw USB; normal Terminal has already queried this dongle successfully. The saved results can be read locally without copying Terminal output into chat.
 
@@ -57,17 +57,15 @@ An additional experiment tests whether the C chip accepts the B family's memory-
 python3 bt600_probe.py --probe-memory
 ```
 
-That option queries candidate boot-vector words at `0x0` and `0x4`, then the two addresses found in the C-chip patch. Each `0xfc61` query requests four bytes, so the reset vector needs its own read. The C controller's reply determines whether this command is available. It does not write memory.
+That option reads four bytes at `0x00217e88`. The actual dongle answered this query on 2026-10-16. The former `0x0880a0a8` candidate timed out and disconnected the controller, so it has been removed. Queries at zero and four returned zeroes and are also omitted from the normal run. It does not write memory.
 
-On this dongle, `0xfc61` works: `0x00217e88` returned live data and `0x0` read back as zero. Reading `0x0880a0a8` hung the controller, so that peripheral/flash window is excluded from routine reads.
-
-To map a span of live memory, read-only:
+An optional bounded range reader is available for the next mapping step:
 
 ```bash
 python3 bt600_probe.py --read-range 0x00217e88 64
 ```
 
-This dumps `WORDS` four-byte words from `START` (both hex or decimal) and stops on the first rejected or timed-out read. Once `--load-stock` has made the chip-2 patch resident, a `--read-range` sweep of the `0x0021xxxx` region locates the patch's prologue, and the address where it appears is the controller's real load base. It does not write memory, and it does not read `0x0880a0a8`.
+It permits 1..256 four-byte words, aligned to four bytes, entirely within `0x00217000..0x00217fff`. That page is an experiment boundary around the responding address, not a measured RAM map. Only `0x00217e88` has returned data so far. The default runner does not expand into a range read. Each completed word is printed immediately; any rejected, malformed, or timed-out read stops with an error. Finding the detected ROM's stock prologue identifies a candidate load address, which still needs execution/mapping evidence.
 
 The loader reassembles HCI events across USB packets, reports Command Status errors, checks fragment acknowledgements, and returns an error if the version after upload does not match. Run the offline suite with `python3 -m unittest -v`.
 
