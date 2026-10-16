@@ -31,6 +31,10 @@ P = C.c_void_p
 # excluded. Boot-vector reads at 0 and 4 returned only zeroes.
 MEMORY_READ_OPCODE = 0xFC61
 MEMORY_READ_ACCESS = 0x20
+# Counterpart write opcode on the B family. Untested on this C chip; --write-test
+# probes it with a read/flip/verify/restore cycle on one word so the footprint is
+# a single briefly-changed value that is put back, and a replug clears anything odd.
+MEMORY_WRITE_OPCODE = 0xFC62
 MEMORY_PROBE_ADDRESSES = (
     (0x00217E88, "patch data-table literal"),
 )
@@ -215,6 +219,17 @@ def read_memory_word(command, address, quiet=False):
     return result[1:]
 
 
+def write_memory_word(command, address, data, quiet=False):
+    if len(data) != 4:
+        raise RuntimeError("Memory write expects exactly four data bytes")
+    result = command(MEMORY_WRITE_OPCODE,
+                     struct.pack("<BI", MEMORY_READ_ACCESS, address) + bytes(data), quiet=quiet)
+    if not result or result[0]:
+        status = f"0x{result[0]:02x}" if result else "empty response"
+        raise RuntimeError(f"Memory write at 0x{address:08x} returned {status}")
+    return result
+
+
 def read_memory_range(command, start, words):
     validate_memory_range(start, words)
     blob = bytearray()
@@ -251,6 +266,8 @@ def main():
                         help="Scan memory for the 0b05:1d70 USB signature, read-only; optional START WORDS (default 0x00210000 16384)")
     parser.add_argument("--find-patch", nargs=2, metavar=("START", "WORDS"),
                         help="Scan START..+WORDS for the resident stock patch prologue (run after --load-stock), read-only")
+    parser.add_argument("--write-test", nargs="?", const="0x00210000", metavar="ADDR",
+                        help="Probe memory write: read/flip/verify/restore one word at ADDR (default 0x00210000)")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args()
     if args.find_patch:
@@ -512,6 +529,26 @@ def main():
             else:
                 print(f"Patch prologue not in 0x{patch_start:08x}..0x{patch_start + len(blob):08x}; "
                       "widen or move the window (and confirm the patch is still resident).")
+        if args.write_test is not None:
+            if len(rom) < 2 or rom[0] != 0 or maker != 0x005D:
+                raise RuntimeError("Controller does not match this experiment; no write attempted")
+            write_address = int(args.write_test, 0)
+            if write_address % 4:
+                raise RuntimeError("Write address must be four-byte aligned")
+            original = read_memory_word(command, write_address, quiet=True)
+            flipped = bytes(b ^ 0xFF for b in original)
+            print(f"Write test at 0x{write_address:08x}: read {original.hex(' ')}, writing {flipped.hex(' ')}", flush=True)
+            write_memory_word(command, write_address, flipped)
+            try:
+                after = read_memory_word(command, write_address, quiet=True)
+                took = after == flipped
+                print(f"  read back: {after.hex(' ')}  ->  "
+                      f"{'WRITE WORKS' if took else 'unchanged (read-only region or write ignored)'}")
+            finally:
+                write_memory_word(command, write_address, original)
+                restored = read_memory_word(command, write_address, quiet=True)
+                print(f"  restored:  {restored.hex(' ')}  ->  "
+                      f"{'ok' if restored == original else 'RESTORE FAILED, replug the dongle'}")
         if args.probe_memory:
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)

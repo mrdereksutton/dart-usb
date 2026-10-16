@@ -161,5 +161,21 @@ class MapMemoryTests(unittest.TestCase):
         self.assertEqual(probe.coalesce_runs([]), [])
 
 
+class MemoryWriteTests(unittest.TestCase):
+    def test_write_frames_opcode_access_address_and_data(self):
+        sent = []
+        probe.write_memory_word(lambda op, params=b"", quiet=False: sent.append((op, params)) or b"\x00",
+                                0x00210000, b"\xde\xad\xbe\xef")
+        self.assertEqual(sent[0][0], probe.MEMORY_WRITE_OPCODE)
+        self.assertEqual(sent[0][1],
+                         struct.pack("<BI", probe.MEMORY_READ_ACCESS, 0x00210000) + b"\xde\xad\xbe\xef")
+
+    def test_write_rejects_bad_length_and_error_status(self):
+        with self.assertRaises(RuntimeError):
+            probe.write_memory_word(lambda *a, **k: b"\x00", 0, b"\x01\x02")
+        with self.assertRaisesRegex(RuntimeError, "0x01"):
+            probe.write_memory_word(lambda *a, **k: b"\x01", 0, b"\x01\x02\x03\x04")
+
+
 if __name__ == '__main__':
     unittest.main()
