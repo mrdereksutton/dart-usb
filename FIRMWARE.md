@@ -504,3 +504,50 @@ Open, not yet solved: (a) a reliable full 2 MB flash image, (b) whether any host
 path (USB/HCI) can trigger a flash write, or whether that needs the UART pins,
 (c) therefore whether the audio-capability question can even be answered from the
 host. These were overclaimed before; this is the accurate state.
+
+### Command discovery: can the host write permanent memory? 2026-10-17
+
+Did proper vendor-command discovery, cross-referenced with Dark Mentor's RTL8761B
+toolkit, instead of guessing.
+
+**Host vendor commands that exist:**
+- `fc20` Download Patch, `fc61` Read Memory, `fc62` Write Memory. These are the
+  only write/download primitives Dark Mentor's toolkit uses, and their code
+  states the patches are RAM-only and must be re-downloaded every power cycle.
+  We independently proved `fc62` writes do not survive a replug.
+- `fc29`/`fc2a`/`fc2b` (config read/write/erase) and `fc2c`, `fc6b`, `fc6d`,
+  `fc7e` in the CU dispatcher. `fc29` returns a FIXED config/efuse block (ignores
+  the address argument), so these act on a config store, not arbitrary flash.
+
+**The flash driver is present but indirect.** A flash-API vtable sits at
+`0x00020180`: `flash_read` (0xcbb4) at +0x0c, `flash_write` (0xcc34) at +0x10,
+then erase/DMA entries. It is invoked only through a RAM-resident struct pointer
+installed at boot, so no fixed-ROM path statically connects a host command to
+`flash_write`. Static analysis therefore can neither prove nor disprove a
+host->flash route; the indirection hides it.
+
+**Conclusion on permanent writes from the host (USB):**
+- Confirmed persistent write: none demonstrated. `fc62` (RAM) is wiped by a
+  power cycle; the most thorough public RE (Dark Mentor) also found no persistent
+  host write and relies on the host re-loading firmware/config each boot.
+- The only candidate is the config path (`fc2a` write / `fc2b` erase). Whether it
+  persists is untested, and probing it blindly is risky: if the store is efuse it
+  may be write-once/irreversible (brick-class); if it is flash-backed config it
+  would be reversible with the backup. The config field map (e.g. whether USB
+  identity is settable) is Realtek-internal and not public.
+
+So: a safe, confirmed way to persistently rewrite this dongle from the host does
+not currently exist. Persistence in practice needs either a host present at every
+boot (not viable in the car) or factory/UART programming (physical pins). The one
+untested lever (config write) must not be exercised blindly due to possible
+one-time-programmable efuse.
+
+### Chip audio capability (from ROM strings)
+
+The ROM does contain Bluetooth audio machinery: `audio_sniff_*` and
+`lc_*esco*` (classic SCO/eSCO voice links) and `ll_iso_*` / `bz_isoch_*`
+(LE Audio isochronous streams / Auracast). So the chip genuinely handles
+Bluetooth audio links at the controller level, consistent with Realtek's codec-
+offload / Auracast claims. What is absent is an A2DP/LE-Audio SINK profile that
+decodes to PCM and a USB-Audio-Class presentation to a host; those are the parts
+a car-side bridge still needs and that no public firmware provides for this chip.
