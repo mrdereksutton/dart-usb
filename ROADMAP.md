@@ -3,7 +3,7 @@
 Single-source overview as of 2026-10-17. Detailed, chronological notes (including
 mid-session corrections) live in `FIRMWARE.md`; prior art in `PRIOR_ART.md`; the
 hardware procedure in `FLASH_ACCESS.md`; session history in `SESSION_NOTES.md`.
-This file is the clean summary and the rationale for the next step.
+This file is the clean summary of findings and the chosen approach.
 
 ---
 
@@ -69,14 +69,15 @@ ready-made reference for the protocol and proof the iAP path works.
    over USB we cannot trace how the patch is applied, cannot verify injected code,
    and cannot reach the regions that matter.
 
-**Net:** over USB the dongle is a dead end for the goal — we can deliver bytes but
-can't make them run or persist, and can't read the firmware that would tell us
-how.
+Over USB, then: we can deliver bytes, but with the commands found we can't make
+them run (injected code doesn't execute) or persist (RAM is wiped at power-on),
+and we can't read the `0x100000..0x200000` firmware that would explain the apply
+mechanism.
 
-## 6. The plan: direct SPI flash access
+## 6. The chosen approach: direct SPI flash access
 
-Read and write the dongle's flash chip **directly**, with a clip-on programmer,
-bypassing the controller and USB entirely.
+Read and write the dongle's flash chip directly, with a clip-on programmer, over
+the flash chip's own pins rather than through the RTL8761 controller.
 
 - Hardware: a ~$5 CH341A USB programmer (run at **3.3 V**), a SOIC-8 test clip,
   and `flashrom`.
@@ -84,35 +85,29 @@ bypassing the controller and USB entirely.
   chip, clip on, `flashrom` read-twice-and-compare to get a stable dump, back it
   up, then modify and write back, verifying each time.
 
-## 7. Why this is the right next step
+## 7. What direct flash access provides (facts)
 
-- **It reaches what USB can't.** A direct SPI read returns the *entire* 2 MB flash,
-  including the `0x100000..0x200000` code that `fc61` hangs on. That finally lets
-  us read the descriptor builder and the patch-apply mechanism offline and
-  understand how to change what the dongle presents as.
-- **It persists, which the car requires.** The car reads the flash at every
-  power-on. A flash change is therefore the *only* kind of change that survives
-  into the car — unlike RAM pokes or host-loaded patches, which the car can't
-  provide and a power cycle erases.
-- **It is reversible.** With a verified backup of the original flash, any change
-  can be undone by writing the backup back, so experiments are recoverable
-  (unlike a blind, unverifiable USB patch).
-- **It is cheap, standard, and low-risk** compared to the alternatives: the UART
-  download route is undocumented for this chip and needs an unknown pin/mode; the
-  USB route is blocked. Direct SPI is the well-trodden hardware-hacking path and
-  needs no cooperation from the Realtek firmware.
+- A direct SPI read returns the entire 2 MB flash, including the
+  `0x100000..0x200000` code that `fc61` hangs on, so the descriptor builder and
+  the patch-apply mechanism become readable offline.
+- A flash change is present at power-on, so it persists into the car (RAM writes
+  and host-downloaded patches do not survive a power cycle; the car provides no
+  host).
+- With a verified backup of the original flash, a change can be undone by writing
+  the backup back.
+- The parts cost about $5 and the read/write needs no cooperation from the
+  RTL8761 firmware.
 
-In short: every capability the USB path lacked — full read, persistence, reversible
-write — direct flash access provides, with commodity tools.
+(For reference, the other routes considered are the USB vendor commands — which
+cannot read the needed regions or persist a change — and the chip's UART
+programming pins, whose download mode and pinout are undocumented for this part.)
 
-## 8. Honest scope beyond flash access
+## 8. Scope beyond flash access
 
-Getting read/write access to the flash unblocks the *investigation* and gives a
-persistent write path. It does **not** by itself make music play. Turning the
-dongle into something the car treats as an iPod still requires building firmware
-that implements the iAP side and an audio path fed from Bluetooth — a substantial
-custom-firmware effort on top of flash access. Flash access is the prerequisite
-that makes that work possible and testable; it is not the finish line.
+Flash read/write unblocks the investigation and gives a persistent write path. It
+does not by itself make music play. Having the car treat the dongle as an iPod
+still requires firmware that implements the iAP side and an audio path fed from
+Bluetooth — a substantial custom-firmware effort on top of flash access.
 
 ## 9. Prior art to build on
 
