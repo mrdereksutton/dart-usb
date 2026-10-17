@@ -45,6 +45,19 @@ QUERIES = (
 # At 0x021776ac..0x021776b2, VID/PID come from [0x002808a8+0x10/+0x12].
 DESCRIPTOR_POINTER_ADDRESS = 0x002C10B4
 USB_ID_CONFIG_ADDRESS = 0x002808B8
+# Registration at 0x02188a2a: R=*[0x002c1240], G=R+4.
+# Bind stores composite state C at G+0x3c. GET_DESCRIPTOR uses C+0x0c.
+USB_CONTEXT_POINTER_ADDRESS = 0x002C1240
+# At 0x02168a42..0x02168a58, ASUS initializes allocation region 6 with
+# base 0x00300000 and size 0x14000; 0x021719e6 records that pair at
+# 0x002819c0. The first live context read yielded 0x0030fe28 in this pool.
+CANDIDATE_RAM_WINDOWS = ((0x00200000, 0x00300000), (0x00300000, 0x00314000))
+
+
+def plausible_ram_object(address, size):
+    return not address & 3 and any(
+        start <= address and address + size <= end
+        for start, end in CANDIDATE_RAM_WINDOWS)
 
 
 def validate_query(name, reply):
@@ -107,6 +120,44 @@ def inspect_descriptor_targets(read_word, report):
     report["config_matches_adapter"] = ids == bytes.fromhex("05 0b 70 1d")
 
 
+def inspect_active_descriptor(read_word, report):
+    """Test the independently traced context chain, at most seven word reads."""
+    report["context_pointer_location"] = f"0x{USB_CONTEXT_POINTER_ADDRESS:08x}"
+    context = int.from_bytes(read_word(USB_CONTEXT_POINTER_ADDRESS), "little")
+    report["context_pointer"] = f"0x{context:08x}"
+    if not plausible_ram_object(context, 0x44):
+        report["pointer_result"] = "invalid context pointer; not followed"
+        return
+    composite = int.from_bytes(read_word(context + 0x40), "little")
+    report["composite_pointer"] = f"0x{composite:08x}"
+    if not plausible_ram_object(composite, 0x20):
+        report["pointer_result"] = "invalid composite pointer; not followed"
+        return
+    address = composite + 0x0C
+    report["descriptor_address"] = f"0x{address:08x}"
+    first = read_word(address)
+    if first[:2] != b"\x12\x01":
+        report["pointer_result"] = "active candidate lacks USB device descriptor header"
+        return
+    raw = first + b"".join(read_word(address + offset) for offset in (4, 8, 12, 16))
+    report["pointer_result"] = "USB device descriptor found in active candidate"
+    report["descriptor"] = {"raw": raw[:18].hex(" ")}
+
+
+def inspect_usb_context(read_word, report):
+    """Capture only the context header used by bind/setup, without following it."""
+    report["context_pointer_location"] = f"0x{USB_CONTEXT_POINTER_ADDRESS:08x}"
+    context = int.from_bytes(read_word(USB_CONTEXT_POINTER_ADDRESS), "little")
+    report["context_pointer"] = f"0x{context:08x}"
+    if not plausible_ram_object(context, 0x50):
+        report["pointer_result"] = "invalid context header span; not followed"
+        return
+    report["context_words"] = {}
+    for offset in range(0, 0x50, 4):
+        data = read_word(context + offset)
+        report["context_words"][f"0x{offset:02x}"] = f"0x{int.from_bytes(data, 'little'):08x}"
+
+
 class DeviceDescriptor(C.Structure):
     _fields_ = [
         ("length", C.c_uint8), ("kind", C.c_uint8), ("usb", C.c_uint16),
@@ -123,9 +174,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--describe", action="store_true",
                         help="Print planned packets without accessing USB")
-    parser.add_argument("--descriptor-targets", action="store_true",
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--descriptor-targets", action="store_true",
                         help="Read the ASUS image's descriptor pointer and USB-ID config, then save the result")
+    modes.add_argument("--active-descriptor", action="store_true",
+                       help="Test the independently traced USB context/composite descriptor chain (at most seven words)")
+    modes.add_argument("--usb-context", action="store_true",
+                       help="Capture the 0x50-byte bind/setup context header, without following its fields (21 words maximum)")
     args = parser.parse_args()
+    target_mode = args.descriptor_targets or args.active_descriptor or args.usb_context
     if args.describe:
         for name, opcode, params in QUERIES:
             print(f"{name}: {(struct.pack('<HB', opcode, len(params)) + params).hex(' ')}")
@@ -133,6 +190,13 @@ def main():
             for address in (DESCRIPTOR_POINTER_ADDRESS, USB_ID_CONFIG_ADDRESS):
                 print(f"Memory 0x{address:08x}: {(struct.pack('<HB', 0xfc61, 5) + struct.pack('<BI', 0x20, address)).hex(' ')}")
             print("Follow a plausible RAM pointer only if its first word starts with 12 01; at most five descriptor words.")
+        if args.active_descriptor:
+            print("Read R=*[0x002c1240]; if aligned candidate RAM, read C=*[R+0x40].")
+            print("If C is aligned candidate RAM, read C+0x0c; follow only a 12 01 header, five descriptor words maximum.")
+        if args.usb_context:
+            print("Read R=*[0x002c1240]; if the full span fits candidate RAM, read R..R+0x4c (20 words). No field is followed.")
+        if target_mode:
+            print("Standard GET_DESCRIPTOR: bmRequestType=80 request=06 value=0100 index=0000 length=18")
         return 0
 
     candidates = ["/opt/homebrew/lib/libusb-1.0.dylib",
@@ -178,6 +242,8 @@ def main():
     result = {"usb_id": "0b05:1d70", "queries": {},
               "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "descriptor_targets_requested": args.descriptor_targets,
+              "active_descriptor_requested": args.active_descriptor,
+              "usb_context_requested": args.usb_context,
               "started_utc": datetime.now(timezone.utc).isoformat()}
     try:
         checked(usb.libusb_init(C.byref(context)), "Initialize libusb")
@@ -249,10 +315,11 @@ def main():
             result["queries"][name] = entry
             print(f"  {reply.hex(' ')}", flush=True)
             validate_query(name, reply)
-        if args.descriptor_targets:
+        if target_mode:
             if result["queries"]["rom_version"]["rom_version"] != 1:
                 raise RuntimeError("Descriptor targets are derived only for ROM 1 / ECO 2")
-            target_report = {"reads": []}
+            mode = "context" if args.usb_context else "active" if args.active_descriptor else "template"
+            target_report = {"reads": [], "mode": mode}
             result["descriptor_targets"] = target_report
             standard_buffer = C.create_string_buffer(18)
             size = checked(usb.libusb_control_transfer(
@@ -275,7 +342,12 @@ def main():
                 print(f"  {data.hex(' ')}", flush=True)
                 return data
 
-            inspect_descriptor_targets(read_word, target_report)
+            if args.usb_context:
+                inspect_usb_context(read_word, target_report)
+            elif args.active_descriptor:
+                inspect_active_descriptor(read_word, target_report)
+            else:
+                inspect_descriptor_targets(read_word, target_report)
             compare_descriptor(target_report, standard)
     except (Exception, KeyboardInterrupt) as error:
         failed = True
@@ -299,7 +371,7 @@ def main():
         if initialized:
             usb.libusb_exit(context)
     result["finished_utc"] = datetime.now(timezone.utc).isoformat()
-    if args.descriptor_targets:
+    if target_mode:
         try:
             output = Path(__file__).resolve().parent / "results"
             output.mkdir(exist_ok=True)
