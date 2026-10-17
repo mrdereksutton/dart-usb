@@ -291,3 +291,28 @@ confirm by re-enumerating on the Mac and reading the descriptors back with
 `descriptor_capture.py`. Identifying the specific RAM state bytes that set the
 interface/endpoint shape is the next concrete sub-task, approached by writing a
 candidate word and observing the re-enumerated descriptor, not by more reading.
+
+### Write channel into the descriptor-handler RAM confirmed, 2026-10-17
+
+The device-context array pointer `*0x00285254 = 0x002103a8`, so device-0 context
+is `0x002103a8` (stride `0x440`), inside the known-writable `0x210000` RAM window.
+The handler at `0x205ca2` reads its descriptor state from this context.
+
+Ran the reversible write primitive (`--write-test`: read / flip all bits / verify
+/ restore), fc62, on the live dongle:
+
+    0x00210000   read 00000000 -> wrote ffffffff -> read back ffffffff (WRITE WORKS) -> restored 00000000 ok
+    0x002103d8   (device-0 context +0x30, a zero scratch word) -> same: WRITE WORKS, restored ok
+
+So the write channel reaches the live USB device-context RAM the descriptor
+handler uses, and the flips restored cleanly with the dongle still responding.
+This is the mechanism needed to change what the dongle enumerates as.
+
+What remains for an actual descriptor change is not a reading problem: the
+descriptor shape (interface/endpoint layout, iso packet sizes) is computed by the
+handler chain, so the specific context/state byte that moves it must be found by
+writing a candidate and observing the re-enumerated descriptor. Observing the
+change requires the host to re-enumerate, i.e. a physical unplug/replug, then
+`descriptor_capture.py`. That persistent write + replug is the next step and is
+done at the keyboard, since a wrong persistent value can wedge enumeration until
+replug. The reversible write-test above leaves nothing changed.
