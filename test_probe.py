@@ -186,6 +186,15 @@ class MemoryRangeValidationTests(unittest.TestCase):
         self.assertEqual(
             probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
 
+    def test_poke_address_must_be_in_an_allowed_page(self):
+        self.assertEqual(probe.validate_write_address(0x002103d8), 0x002103d8)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x00000000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x000a0000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x002103d9)
+
     def test_context_ram_page_allowed(self):
         # 0x210000 window holds the device context the descriptor handler reads.
         self.assertEqual(

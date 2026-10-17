@@ -214,6 +214,17 @@ def find_patch_base(blob, start, needle):
     return None if index < 0 else start + index
 
 
+def validate_write_address(address):
+    """A --poke target must be aligned and sit inside one allowed read page, so a
+    persistent write can never reach an untested or hang-prone address."""
+    if address % 4:
+        raise ValueError("Use a four-byte-aligned ADDR")
+    if not any(lo <= address < address + 4 <= hi for lo, hi in MEMORY_READ_PAGES):
+        pages = ", ".join(f"0x{lo:08x}..0x{hi - 1:08x}" for lo, hi in MEMORY_READ_PAGES)
+        raise ValueError(f"ADDR must be inside one allowed page ({pages})")
+    return address
+
+
 def validate_memory_range(start, words):
     if start % 4 or not 1 <= words <= MAX_MEMORY_WORDS:
         raise ValueError(f"Use a four-byte-aligned START and 1..{MAX_MEMORY_WORDS} WORDS")
@@ -283,6 +294,9 @@ def main(argv=None):
                         help="Scan START..+WORDS for the resident stock patch prologue (run after --load-stock), read-only")
     parser.add_argument("--write-test", nargs="?", const="0x00210000", metavar="ADDR",
                         help="Probe memory write: read/flip/verify/restore one word at ADDR (default 0x00210000)")
+    parser.add_argument("--poke", nargs=2, metavar=("ADDR", "VALUE"),
+                        help="PERSISTENT write of one 32-bit VALUE at ADDR (no restore); ADDR must be aligned "
+                             "and inside one allowed read page. Used for the write-and-reenumerate experiment.")
     parser.add_argument("--capture-usb-ram", metavar="OUTPUT",
                         help="Save live USB descriptors and a RAM dump under OUTPUT, then search descriptor structures")
     parser.add_argument("--capture-range", nargs=2, metavar=("START", "WORDS"),
@@ -314,6 +328,15 @@ def main(argv=None):
             args.read_range = validate_memory_range(*(int(value, 0) for value in args.read_range))
         except ValueError as error:
             parser.error(str(error))
+    if args.poke:
+        try:
+            poke_addr = validate_write_address(int(args.poke[0], 0))
+            poke_value = int(args.poke[1], 0)
+            if not 0 <= poke_value <= 0xFFFFFFFF:
+                raise ValueError("VALUE must be a 32-bit integer")
+        except ValueError as error:
+            parser.error(str(error))
+        args.poke = (poke_addr, poke_value)
     if args.find_descriptor is not None:
         if len(args.find_descriptor) == 0:
             args.find_descriptor = (0x00210000, 16384)
@@ -596,6 +619,19 @@ def main(argv=None):
                 restored = read_memory_word(command, write_address, quiet=True)
                 print(f"  restored:  {restored.hex(' ')}  ->  "
                       f"{'ok' if restored == original else 'RESTORE FAILED, replug the dongle'}")
+        if args.poke is not None:
+            if len(rom) < 2 or rom[0] != 0 or maker != 0x005D:
+                raise RuntimeError("Controller does not match this experiment; no write attempted")
+            poke_addr, poke_value = args.poke
+            before = read_memory_word(command, poke_addr, quiet=True)
+            data = struct.pack("<I", poke_value)
+            print(f"Persistent poke at 0x{poke_addr:08x}: was {before.hex(' ')}, writing {data.hex(' ')} "
+                  "(NOT restored)", flush=True)
+            write_memory_word(command, poke_addr, data)
+            after = read_memory_word(command, poke_addr, quiet=True)
+            print(f"  read back: {after.hex(' ')}  ->  "
+                  f"{'written' if after == data else 'write ignored (read-only or latched)'}")
+            print("  value left in place; replug to power-cycle, or re-read to check persistence.")
         if args.probe_memory:
             for address, label in MEMORY_PROBE_ADDRESSES:
                 print(f"Trying four-byte memory read at 0x{address:08x} ({label})", flush=True)
