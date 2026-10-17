@@ -18,9 +18,18 @@ of SESSION_NOTES.md. Older chronological claims are superseded where they confli
 The completed CPU-memory capture and ROM/RAM files are under
 `results/flash-backup/`; inspect their manifest and hashes. These are local files.
 The file named “flash” includes RAM; do not treat it as a raw physical SPI image.
-A full device descriptor exists at `0x0030d18c`, with candidate composite object
-`0x0030d180`, driver `0x0030d130`, and template `0x0030d110`. The next experiment
-is a bounded fresh read and reversible EP0 descriptor edit with automatic restore.
+A full device descriptor exists at `0x0030d18c`, with composite object
+`0x0030d180`, driver `0x0030d130`, and template `0x0030d110`. A reversible edit
+changed the actual USB reply. GET_DESCRIPTOR device index 1 reaches the live
+copy; this macOS setup returns cached data for index 0.
+
+Custom RAM code now runs through setup callback `0x020be8a1` at `D+0x34`.
+Both a marker trampoline and a call to ROM flash-read entry `0x0000cbb5` ran
+successfully, with all temporary RAM and configuration changes restored.
+A complete 2 MiB capture at `0x02000000` is saved with no gaps; its exact path,
+hash and test records are at the top of SESSION_NOTES.md. No dump is running.
+Next: native USB endpoint queues and a controlled PCM stream. The small
+freestanding packetizer/test tone in `firmware/` already compiles and passes tests.
 
 RAM reads/write-readback-restore, stock download, vendor register query, and the
 old descriptor-pointer experiment already ran. Do not repeat them merely to

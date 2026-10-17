@@ -15,8 +15,14 @@ receiver for the 2016 Dart's factory 8.4-inch Uconnect USB/iPod input.
   changes only iProduct 2 to 1, then restores the RAM word and USB response.
 - The actual setup handler at **0x020be8a0 is readable over USB**. A 1 KiB capture
   matches the analogous ASUS firmware code closely and exposes the active EP0 path.
-- The flash-address region starts at **0x02000000**. Its first 256 bytes read
-  successfully. A full 2 MiB capture is in progress; see SESSION_NOTES.md.
+- A complete **2 MiB flash-address-region capture**, starting at 0x02000000,
+  with no missing bytes; see SESSION_NOTES.md for its hash.
+- **Custom RAM code executes through the USB setup callback**, writes a marker,
+  and returns to the original handler. All temporary changes restore.
+- **A RAM helper calls the resident flash-read routine** at 0x0000cbb5, reads
+  the expected 16 bytes, returns status 0x18, and restores all borrowed RAM.
+- A freestanding stereo PCM packetizer and test tone compile for the CU core
+  and pass host tests. Native endpoint integration is next.
 
 For descriptor experiments, this macOS setup returns cached data for normal
 GET_DESCRIPTOR device index 0. The firmware accepts index 1 and serves its live
@@ -24,17 +30,13 @@ RAM copy; this is the request used by the successful experiment.
 
 ## Next milestones
 
-1. Run the prepared RAM setup-callback trampoline after the flash capture ends.
-   It should write a marker and tail-call the original handler, then restore all
-   touched RAM. It has passed ARM emulation.
-2. Use that code path to call existing routines with known arguments, starting
-   with reads and status. Map physical flash offsets, boot image structure and
-   recovery before considering erase/program operations.
-3. Map configuration construction and endpoint queues. Produce a controlled USB
+1. Map configuration construction and endpoint queues. Produce a controlled USB
    PCM test stream and the audio/HID/iAP persona the car accepts.
-4. Add standalone Bluetooth audio receive/decode plus metadata/control handling.
+2. Map physical flash offsets, boot image structure and recovery using the saved
+   complete capture and the working native read path.
+3. Add standalone Bluetooth audio receive/decode plus metadata/control handling.
    Inspect existing SDP/L2CAP/upper-stack code before deciding what must be added.
-5. Deliver persistent boot and pairings, then test end-to-end audio/metadata and
+4. Deliver persistent boot and pairings, then test end-to-end audio/metadata and
    controls in the Dart, including ignition power cycles.
 
 The car-facing published reference combines UAC1 audio streaming with iAP over
@@ -65,8 +67,8 @@ only route. FLASH_ACCESS.md keeps these details separate from the USB work.
 ## Tools and evidence
 
 - bt600_vendor_read.py: bounded heap/setup reads, restored descriptor edits,
-  real flash-region capture, and the prepared RAM callback test.
-- descriptor_edit.py, setup_marker.py, capture_flash.py: transport-independent
+  real flash-region capture, executed RAM callback and native flash-read tests.
+- descriptor_edit.py, setup_marker.py, native_flash_read.py, capture_flash.py: transport-independent
   experiment logic with restoration and partial-result handling.
 - analyze_asus_firmware.py, rom_analyze.py, analyze_flash.py: offline analysis.
 - SESSION_NOTES.md: latest results and exact next command.

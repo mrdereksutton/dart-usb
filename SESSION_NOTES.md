@@ -38,24 +38,40 @@ Offline files are in `results/runtime-setup/`.
 The actual code at `0x020be962..0x020be986` copies the descriptor at `C+0x0c`
 into the control-response buffer. `0x020be92e` dispatches standard requests.
 The flash driver's address region begins at `0x02000000`, not `0x00200000`.
-A 256-byte read of that region's start succeeded (erased bytes, no gaps).
-A full 2 MiB capture is running separately; inspect its live process and result
-before starting another USB command. Its report is
-`results/bt600-targets-20261017T101939.145845Z.json` and log is
-`results/real-flash-full.log`. Do not confuse it with the earlier CPU-memory file.
+The full **2,097,152-byte capture completed without gaps**:
+`results/bt600-targets-20261017T101939.145845Z.bin`, with the same-name JSON report.
+SHA-256: `6ceb104173c7d474b42d62d501087e7933131c43deef03c706022f12a8c633c7`.
+Configuration zero was restored. This is a complete CPU view of that flash
+address region; physical SPI offsets and boot image mapping still need analysis.
+The earlier file at `0x00200000` remains a separate CPU/RAM capture.
 
-## Prepared next experiment
+## Custom RAM code and native flash read both succeeded
 
-`--test-setup-marker --device-descriptor-index 1` will temporarily redirect the
-validated USB setup callback to a 28-byte RAM trampoline. It writes marker
-`0xd47a6001` then tail-calls the original handler, preserving argument registers,
-stack, LR and flags. The code is tested in a Unicorn ARM emulator, including the
-marker write and tail call. It has not yet run on the dongle.
+The 28-byte setup trampoline **ran on the dongle** and wrote marker `0xd47a6001`
+before tail-calling the original handler. The USB descriptor remained correct;
+the original callback, helper words, marker, and configuration zero all restored.
+Result: `results/bt600-targets-20261017T103719.627567Z.json`.
 
-The helper borrows only zero-filled words at `0x00211f20` and marker word
-`0x00211f00`, saves all originals before writing, and restores the callback before
-removing the helper. If the scratch words are in use it stops. The prior fc20
-entry-hook attempts are a different experiment and do not need repeating.
+The next 68-byte helper **called the resident flash-read routine successfully**:
+Thumb entry `0x0000cbb5`, arguments `(0x020be8a0, 0x00211e90, 16)`. It returned
+status `0x18` and the expected bytes
+`2d e9 f3 4f 85 b0 4f f0 00 09 05 98 88 46 4f f0`.
+Result: `results/bt600-targets-20261017T104350.210104Z.json`.
+Every borrowed word and the callback restored; configuration zero restored too.
+No flash or efuse erase/program operation was performed.
+
+The native helper uses code at `0x00211e30`, output at `0x00211e90`, marker at
+`0x00211f00`, and status at `0x00211f04`. Two earlier candidate layouts stopped
+before writing because their scratch words were occupied (`...104032.973626Z`
+and `...104054.864337Z`). Always recheck the selected words live. Both helpers
+pass ARM emulation, including register/flag preservation; the native read runs
+once even if setup is triggered again. Restore the callback before clearing code.
+
+These experiments bypass the fc20 loader. The old failed entry-hook tests do
+not need repeating. Next: map the native endpoint queues and configuration path,
+connect the small stereo PCM/test-tone core, and test a controlled USB stream.
+The full flash image can be analyzed offline for boot/persistence in parallel
+with that work; do not start another long capture.
 
 # Session notes — 2026-10-17
 

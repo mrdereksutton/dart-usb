@@ -68,6 +68,31 @@ class SetupMarkerTests(unittest.TestCase):
             helper.test_setup_marker(read, write, trigger, {}, Mock())
         self.assertEqual(writes, [])
 
+    def test_overlapping_scratch_prevents_all_writes(self):
+        memory, writes, read, write, trigger = self.fixture()
+        with self.assertRaisesRegex(RuntimeError, "overlap"):
+            helper.test_setup_marker(read, write, trigger, {}, Mock(),
+                                     extra_addresses=(helper.CODE_ADDRESS,))
+        self.assertEqual(writes, [])
+
+    def test_relocated_helper_restores_the_selected_words(self):
+        memory, writes, read, write, trigger = self.fixture()
+        address = 0x00211E30
+        for offset in range(0, 28, 4):
+            memory[address + offset] = bytes(4)
+        original, report = memory.copy(), {}
+
+        def relocated_trigger():
+            if int.from_bytes(memory[D + 0x34], "little") == address | 1:
+                memory[helper.MARKER_ADDRESS] = helper.MARKER_VALUE.to_bytes(4, "little")
+            return DEVICE
+
+        helper.test_setup_marker(read, write, relocated_trigger, report, Mock(), code_address=address)
+        self.assertEqual(memory, original)
+        self.assertEqual(report["marker_hook"]["code_address"], "0x00211e30")
+        self.assertTrue(any(a == address for a, _ in writes))
+        self.assertFalse(any(a == helper.CODE_ADDRESS for a, _ in writes))
+
     def test_checkpoint_failure_prevents_all_writes(self):
         memory, writes, read, write, trigger = self.fixture()
         with self.assertRaises(OSError):

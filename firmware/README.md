@@ -20,5 +20,12 @@ python3 -m unittest -v test_usb_audio_source
 ```
 
 The build targets ARMv8-M Mainline instructions used by the CU's Real-M300 core.
-The packetizer is ready for the native endpoint queue integration; it has so far
-run in host tests. The prepared USB setup marker is the next hardware code test.
+The packetizer is ready for native endpoint queue integration; it has so far
+run in host tests. The USB setup trampoline and a resident ROM flash-read call
+have both executed successfully on the dongle.
+
+`flash_read_helper.S` preserves the setup caller's registers and flags, reads
+16 bytes through ROM entry `0x0000cbb5`, records its status, and tail-calls the
+original handler. `native_flash_read.py` assembles and installs it with zero-word
+checks, saved originals and automatic restoration. The hardware run returned the
+expected data and status `0x18`; see SESSION_NOTES.md for the saved result.

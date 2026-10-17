@@ -1,11 +1,12 @@
 # Dart USB — ASUS USB-BT600 / RTL8761C research
 
-Current continuation: the bounded descriptor-target read has completed.
-The candidate pointer at `0x002c10b4` returned `0x00000007` (not followed), while
-`0x002808b8` contains the expected VID/PID. Codex accessed the dongle through an
-approved execution outside the command sandbox. Read [CLAUDE.md](CLAUDE.md),
-[HARDWARE.md](HARDWARE.md), and [FIRMWARE.md](FIRMWARE.md) before another
-experiment; the next work is reconciling the live descriptor layout.
+Current continuation: **custom RAM code runs on the dongle through its USB setup
+callback**, and a RAM helper successfully calls its resident flash-read routine.
+A reversible edit also changes the actual USB descriptor reply. A complete
+2 MiB flash-address-region capture is saved without gaps. The next work is a
+controlled USB PCM stream using the native endpoint queues. Read
+[SESSION_NOTES.md](SESSION_NOTES.md), [ROADMAP.md](ROADMAP.md), and
+[FIRMWARE.md](FIRMWARE.md) for the current results and addresses.
 
 
 Open-source tools and hardware research toward a **standalone Bluetooth-to-USB/iPod audio bridge**, using an ASUS USB-BT600 and a 2016 Dodge Dart with the stock 8.4-inch Uconnect system.
@@ -22,6 +23,10 @@ The intended path is an iPhone sending wireless audio and track metadata to the 
 | USB and HCI access | Descriptor, local-version, and ROM-version queries succeeded from macOS Terminal |
 | Memory command | Vendor command `0xfc61` returned `b4 88 3b c2` at `0x00217e88` before upload |
 | RAM write | `0xfc62` changed one word at `0x00210000`; readback matched and the original word was restored |
+| USB descriptor control | A temporary iProduct edit changed the actual USB response; original RAM and reply restored |
+| RAM code execution | Our USB callback trampoline wrote its marker and returned to the original handler; all words restored |
+| Resident flash API | Our RAM helper read 16 expected bytes through ROM entry `0x0000cbb5`, returning status `0x18` |
+| Flash address capture | All 2,097,152 bytes at `0x02000000..0x021fffff` saved without gaps |
 | Stock download | Both fragments of the 263-byte upstream payload were accepted; the reported runtime changed from `0x000e8761` to `0x7bf15762` |
 | Container/runtime distinction | The file's `0x4618d3f3` container version differs from the runtime HCI version; the original equality check incorrectly reported failure |
 | Address to exclude | A read at `0x0880a0a8` timed out and disconnected the controller; it was removed from routine probes |
@@ -31,12 +36,12 @@ See [HARDWARE.md](HARDWARE.md) for recorded experiments and the [active pull req
 
 ## Current development
 
-[Draft PR #3](https://github.com/mrdereksutton/dart-usb/pull/3) contains descriptor search and memory mapping, the RAM write experiment, a runtime-version-check correction, USB inspection, saved USB/RAM capture, and an iPod Classic reference capture. Draft work is separate from `main`; use its branch for the new capture commands. The owner has an iPod Classic available for comparison with the BT600 and the Dart.
+[Draft PR #3](https://github.com/mrdereksutton/dart-usb/pull/3) contains the earlier development. Focused branch `codex/bt600-descriptor-targets` merges that work through `e549116` and adds live descriptor control, RAM execution, the resident flash-read test, and a small stereo PCM core. The physical iPod is currently unavailable; work continues from the published UAC1/iAP references and the actual dongle.
 
 The highest-value contributions are:
 
 1. Understand the RTL8761C memory map, patch startup, and larger ASUS `rtl8761cu_mx` firmware path.
-2. Find the USB descriptor and EP0 handling path, then determine endpoint capabilities for USB audio.
+2. Connect the mapped descriptor/EP0 path and native endpoint queues to the PCM source.
 3. Implement the car-facing UAC1/iAP transport and metadata/control behavior.
 4. Implement the Bluetooth audio/metadata path and connect it to USB streaming.
 5. Map persistent storage and boot behavior, then demonstrate end-to-end operation in the car.
@@ -138,15 +143,30 @@ Matches identify a four-byte read address and a byte offset in the named layout;
 USB data path before choosing a descriptor edit. A search with no matches means
 those structures were absent from the captured window at that time.
 
-The chat process cannot open raw USB; normal Terminal can. Saved results can be
-read locally without copying Terminal output into chat. Raw captures are excluded
-from Git.
+Approved execution outside the command sandbox can open USB directly from Codex.
+Normal Terminal is a fallback. Saved results can be read locally; raw captures
+are excluded from Git. Check that no other USB probe is running first.
+
+### Executed RAM-code experiments
+
+The following experiments have already succeeded and restore the original USB
+callback and all borrowed RAM. They save timestamped JSON records automatically:
+
+```bash
+python3 bt600_vendor_read.py --test-setup-marker --device-descriptor-index 1 --quiet-memory
+python3 bt600_vendor_read.py --test-native-flash-read --device-descriptor-index 1 --quiet-memory
+```
+
+The native read copies 16 known flash bytes through ROM `0x0000cbb5`; it performs
+no erase/program operation. The scratch-word guards abort before writing if any
+selected word is occupied. These are completed milestones, not prerequisites to
+repeat before every new test. Exact result paths are in SESSION_NOTES.md.
 
 ### Reverse the descriptor builder
 
-The USB descriptors are not stored as a contiguous blob anywhere `0xfc61` can read:
-a full `0x00001000..0x0009efff` dump searched in four word layouts matched nothing.
-They are built by firmware code. `rom_analyze.py` reverses that code offline, by its
+The live device descriptor is now mapped at `0x0030d18c`; its actual setup handler
+is `0x020be8a0`. Earlier searches of the ROM window alone found no contiguous
+descriptor. `rom_analyze.py` supports offline code analysis by its
 constants rather than its bytes. It disassembles the saved ROM image in Thumb mode and
 reports where the VID `0x0b05` / PID `0x1d70` and the descriptor length+type signatures
 are loaded (as `MOVW` immediates or PC-relative literals), plus the setup-packet
@@ -175,8 +195,8 @@ it does not claim interfaces, change configuration, access the music disk, sync,
 or send iAP commands. See [IPOD_REFERENCE.md](IPOD_REFERENCE.md) for the car comparison.
 
 The earlier `run_bt600_experiment.py` remains available for baseline/upload/RAM
-diagnostics. Those capabilities have already answered on hardware; the next step
-is the saved descriptor/RAM capture above.
+diagnostics. Those capabilities have already answered on hardware; current work
+is native USB endpoint integration, described in ROADMAP.md.
 
 Individual upload command:
 

@@ -1,5 +1,27 @@
 # RTL8761C firmware notes
 
+## RAM execution and resident flash API — 2026-10-17
+
+The validated setup callback at `0x0030d164` can temporarily point to custom
+Thumb code in RAM. The first 28-byte trampoline at `0x00211f20` wrote marker
+`0xd47a6001` and tail-called the original `0x020be8a1` handler. Hardware result:
+`results/bt600-targets-20261017T103719.627567Z.json`.
+
+A second, 68-byte helper at `0x00211e30` called ROM flash-read entry
+`0x0000cbb5` with `(source=0x020be8a0, destination=0x00211e90, length=16)`.
+The vtable word at `0x0002018c` was freshly checked first. Return status was
+`0x18`, and all 16 bytes matched direct reads of the same source. Result:
+`results/bt600-targets-20261017T104350.210104Z.json`.
+The callback, helper, marker, output and status words all restored, as did the
+original USB configuration. The implementation calls the read routine once,
+preserves the setup context, and refuses occupied or overlapping scratch words.
+No flash erase/program or efuse write was performed.
+
+The complete `0x02000000..0x021fffff` CPU flash view is now saved as
+`results/bt600-targets-20261017T101939.145845Z.bin` (2,097,152 bytes, no gaps).
+SHA-256: `6ceb104173c7d474b42d62d501087e7933131c43deef03c706022f12a8c633c7`.
+Map boot headers and physical offsets from this image before planning persistence.
+
 ## Live descriptor control and setup handler — 2026-10-17
 
 A restored edit of `iProduct` at composite descriptor word `0x0030d198` changed

@@ -1,5 +1,22 @@
 # Hardware observations
 
+## Latest successful bench work — 2026-10-17
+
+Approved execution outside the command sandbox accesses the dongle directly.
+Current milestones, with their local JSON records:
+
+| Experiment | Result | Record suffix |
+| --- | --- | --- |
+| Live descriptor edit | iProduct 2 to 1 changed USB reply byte 15; RAM and reply restored | `101804.507832Z` |
+| Full flash-address-region read | All 2,097,152 bytes at `0x02000000`, no gaps | `101939.145845Z` |
+| Custom RAM execution | USB callback ran our marker trampoline and original handler; all words restored | `103719.627567Z` |
+| Resident flash read from RAM code | ROM `0x0000cbb5` returned status `0x18` and 16 expected bytes; all words restored | `104350.210104Z` |
+
+Records are `results/bt600-targets-20261017T<SUFFIX>.json`. Each successful
+experiment restored the original unconfigured USB state. The flash capture hash
+and exact RAM/code addresses are recorded at the top of SESSION_NOTES.md.
+The chronological observations below predate these results.
+
 ## Device and objective
 
 | Item | Value |

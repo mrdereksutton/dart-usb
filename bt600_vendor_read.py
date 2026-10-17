@@ -201,13 +201,16 @@ def main():
                        help="Capture actual flash-region bytes to a new binary; stop on the first failed word")
     modes.add_argument("--test-setup-marker", action="store_true",
                        help="Temporarily install a RAM marker trampoline on the validated USB setup callback, then restore")
+    modes.add_argument("--test-native-flash-read", action="store_true",
+                       help="Use the restored RAM callback to read 16 known flash bytes through the ROM API")
     modes.add_argument("--test-product-string", action="store_true",
                        help="Temporarily change the validated descriptor's iProduct index from 2 to 1; always restore")
     modes.add_argument("--test-template-string", action="store_true",
                        help="Run the same restored iProduct test on the validated driver's template")
     args = parser.parse_args()
     target_mode = (args.descriptor_targets or args.active_descriptor or args.usb_context
-                   or args.heap_descriptor or args.setup_handler or args.capture_flash or args.test_setup_marker
+                   or args.heap_descriptor or args.setup_handler or args.capture_flash
+                   or args.test_setup_marker or args.test_native_flash_read
                    or args.test_product_string or args.test_template_string)
     if args.describe:
         for name, opcode, params in QUERIES:
@@ -230,11 +233,13 @@ def main():
         if args.test_setup_marker:
             print("Save zero scratch words at 0x00211f20 (28 bytes), marker 0x00211f00, and validated driver+0x34.")
             print("Write a register-preserving marker stub, temporarily redirect setup to it, then restore callback first and all RAM.")
+        if args.test_native_flash_read:
+            print("Check ROM read entry 0x0000cbb5, compare 16 bytes at 0x020be8a0, and run one read call through a restored RAM helper.")
         if args.test_product_string or args.test_template_string:
             print("After exact EP0/heap checks, save the original composite/template word to JSON.")
             print("Change only iProduct 2 -> existing string index 1, compare EP0, restore and compare again.")
         if target_mode:
-            print("Standard GET_DESCRIPTOR: bmRequestType=80 request=06 value=0100 index=0000 length=18")
+            print(f"Standard GET_DESCRIPTOR: bmRequestType=80 request=06 value={0x100 | args.device_descriptor_index:04x} index=0000 length=18")
         return 0
 
     candidates = ["/opt/homebrew/lib/libusb-1.0.dylib",
@@ -286,6 +291,7 @@ def main():
               "setup_handler_requested": args.setup_handler,
               "flash_capture_requested": args.capture_flash,
               "setup_marker_test_requested": args.test_setup_marker,
+              "native_flash_read_requested": args.test_native_flash_read,
               "product_string_test_requested": args.test_product_string,
               "template_string_test_requested": args.test_template_string,
               "device_descriptor_test_index": args.device_descriptor_index,
@@ -377,7 +383,8 @@ def main():
         if target_mode:
             if result["queries"]["rom_version"]["rom_version"] != 1:
                 raise RuntimeError("Descriptor targets are derived only for ROM 1 / ECO 2")
-            mode = ("setup-marker-test" if args.test_setup_marker else
+            mode = ("native-flash-read-test" if args.test_native_flash_read else
+                    "setup-marker-test" if args.test_setup_marker else
                     "flash-capture" if args.capture_flash else "setup-handler" if args.setup_handler else
                     "template-string-test" if args.test_template_string else
                     "product-string-test" if args.test_product_string else
@@ -427,7 +434,17 @@ def main():
                     record["error"] = str(error) or "Interrupted"
                     raise
 
-            if args.test_setup_marker:
+            if args.test_native_flash_read:
+                import native_flash_read
+                result["setup_marker_sha256"] = hashlib.sha256(
+                    Path(native_flash_read.setup_marker.__file__).read_bytes()).hexdigest()
+                result["native_flash_read_sha256"] = hashlib.sha256(
+                    Path(native_flash_read.__file__).read_bytes()).hexdigest()
+                result["native_flash_helper_sha256"] = hashlib.sha256(
+                    (Path(__file__).resolve().parent / "firmware/flash_read_helper.S").read_bytes()).hexdigest()
+                native_flash_read.test_native_flash_read(
+                    read_word, write_word, get_descriptor, target_report, checkpoint)
+            elif args.test_setup_marker:
                 import setup_marker
                 result["setup_marker_sha256"] = hashlib.sha256(
                     Path(setup_marker.__file__).read_bytes()).hexdigest()
