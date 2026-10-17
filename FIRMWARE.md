@@ -410,3 +410,30 @@ A wrong `fc2a`/`fc2b` to the boot image bricks the dongle permanently; unlike a
 RAM poke, a replug does not recover it. No write or erase should be issued without
 a verified full-flash backup and a specific, confirmed target offset. `fc29`
 (read) is safe to exercise; `fc2a`/`fc2b` are not, pending that preparation.
+
+### Flash backup captured (mapped region), 2026-10-17
+
+Backed up the flash via fc61 reads of the memory-mapped window. fc61 returns one
+32-bit word per command (its 0x20 byte is a width qualifier, not a length). The
+mapped window is readable for **0x200000..0x225000 (148 KiB)**; at 0x225000 fc61
+faults and the controller drops off USB and re-enumerates (same class of hazard
+as 0x000a0000 / 0x0880a0a8). So the full 2 MB chip is not reachable by fc61;
+only the mapped active-firmware window is.
+
+Backup file (gitignored, under results/flash-backup/): `flash-20261017T023847Z.bin`
+
+    range   0x00200000..0x00225000  (151552 bytes)
+    sha256  fa7211bea66a3caf5e80974dca77f956659a346741bf292d4e753132eee0fd54
+    content 99.1% non-0xff (real firmware), contains ">>> Platform Ext"
+    verified: bytes at 0x205ca2 match the live descriptor handler exactly
+
+This window contains the descriptor handler (offset 0x5ca2) and essentially all
+the active firmware code, so it is a valid restore image for an edit in this
+range: the 4 KiB sector of the handler (offset 0x5000..0x6000) is fully backed
+up. A full-chip image would need the flash-controller read path (vendor fc29),
+whose bulk-data return format is not yet resolved: fc29's Command Complete is a
+fixed status (identical across offsets) and no data event followed, so the read
+mechanism differs from the simple addr+len guess and needs more work.
+
+Net: the safety net for modifying the handler (erase sector 0x205000, reprogram)
+exists, since that sector's original bytes are in this backup.

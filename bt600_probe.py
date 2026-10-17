@@ -312,6 +312,9 @@ def main(argv=None):
     parser.add_argument("--dump-flash", metavar="OUTPUT",
                         help="Read-only: back up the memory-mapped SPI flash (0x200000..0x400000) to OUTPUT "
                              "via fc61 block reads, with a sha256 at the end.")
+    parser.add_argument("--flash-read", nargs=2, metavar=("OFFSET", "LEN"),
+                        help="Debug: send the fc29 flash-read vendor command for LEN bytes at flash OFFSET and "
+                             "print the raw HCI response (read-only).")
     parser.add_argument("--capture-usb-ram", metavar="OUTPUT",
                         help="Save live USB descriptors and a RAM dump under OUTPUT, then search descriptor structures")
     parser.add_argument("--capture-range", nargs=2, metavar=("START", "WORDS"),
@@ -634,6 +637,24 @@ def main(argv=None):
                 restored = read_memory_word(command, write_address, quiet=True)
                 print(f"  restored:  {restored.hex(' ')}  ->  "
                       f"{'ok' if restored == original else 'RESTORE FAILED, replug the dongle'}")
+        if args.flash_read is not None:
+            off = int(args.flash_read[0], 0)
+            length = int(args.flash_read[1], 0)
+            params = struct.pack("<II", off, length)
+            print(f"fc29 flash-read: offset 0x{off:08x}, len {length}; params {params.hex(' ')}", flush=True)
+            try:
+                cc = command(0xFC29, params, quiet=True)
+                print(f"  Command Complete payload: {cc.hex(' ')}")
+            except RuntimeError as err:
+                print(f"  fc29 command error: {err}")
+            # Capture any follow-up async events carrying the data.
+            for _ in range(8):
+                incoming = C.create_string_buffer(64)
+                actual = C.c_int()
+                rc = usb.libusb_interrupt_transfer(handle, 0x81, incoming, 64, C.byref(actual), 500)
+                if rc != 0 or actual.value == 0:
+                    break
+                print(f"  event: {incoming.raw[:actual.value].hex(' ')}")
         if args.dump_flash is not None:
             if len(rom) < 2 or rom[0] != 0:
                 raise RuntimeError("No ROM version returned; no flash read")
