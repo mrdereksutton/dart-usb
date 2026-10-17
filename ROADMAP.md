@@ -1,9 +1,9 @@
-# Dart USB — project status, findings, and the plan
+# Dart USB — project status and findings
 
 Single-source overview as of 2026-10-17. Detailed, chronological notes (including
 mid-session corrections) live in `FIRMWARE.md`; prior art in `PRIOR_ART.md`; the
 hardware procedure in `FLASH_ACCESS.md`; session history in `SESSION_NOTES.md`.
-This file is the clean summary of findings and the chosen approach.
+This file is a factual summary of what the hardware testing and firmware reading found.
 
 ---
 
