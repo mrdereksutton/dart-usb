@@ -381,3 +381,32 @@ functions are called internally and the datasheet documents UART pins for flash
 programming, so whether USB/HCI exposes a flash-write opcode (vs needing the UART
 pins or an in-firmware hook) is the next thing to settle. Read-mapping and the
 write routine itself are now known.
+
+### Host trigger for flash: HCI vendor commands fc29/fc2a/fc2b, 2026-10-17
+
+The HCI vendor-command dispatcher at `0x00013ec0` routes opcodes to the flash
+task by posting a message on the queue at `*0x002810bc` (sent via the function
+pointer loaded there). The flash commands and their argument layout in the HCI
+command buffer (`r3` = params, little-endian):
+
+- **0xfc29 -> message 0x2007 = flash READ.** `addr = [params+3]` (u32),
+  `len = [params+7]` (u32). No data payload. Read-only.
+- **0xfc2a -> message 0x2008 = flash WRITE.** `addr = [params+3]`,
+  `len = [params+7]`, then a data block (params advanced by 0xb). Destructive.
+- **0xfc2b -> message 0x2009 = flash ERASE.** `addr = [params+3]`,
+  `count/type = [params+7]` (u8). Destructive.
+- **0xfc2c -> a multi-field flash op** ([params+3] u16, [params+5] u16,
+  [params+7] u32, [params+0xb] u32, [params+0xf] u32); likely auto-DMA transfer.
+
+So flash read/write/erase are reachable from the Mac over USB/HCI, not only over
+the datasheet's UART pins. This closes the path end to end:
+
+    host fc2a/fc2b -> flash task -> flash_nor_write/erase_locked_rom -> SPIC -> W25Q16
+
+**Backup first, and the brick risk.** The 2 MB flash is already readable with the
+existing `fc61` path because it is mapped at `0x200000`, so a full backup is
+`0x200000..0x400000` with `--read-range` / the capture tooling before any write.
+A wrong `fc2a`/`fc2b` to the boot image bricks the dongle permanently; unlike a
+RAM poke, a replug does not recover it. No write or erase should be issued without
+a verified full-flash backup and a specific, confirmed target offset. `fc29`
+(read) is safe to exercise; `fc2a`/`fc2b` are not, pending that preparation.
