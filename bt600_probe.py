@@ -651,13 +651,21 @@ def main(argv=None):
 
             # fc61 returns one 32-bit word per command (the 0x20 access byte is a
             # fixed width qualifier, not a length). So the dump is word-by-word.
+            # Resumable: a long fc61 run can make the controller drop off USB and
+            # re-enumerate, so an existing partial file is continued, not
+            # restarted. Run the command again (fresh enumeration) to resume.
+            import os as _os, hashlib as _h
+            resume = 0
+            if _os.path.exists(args.dump_flash):
+                resume = _os.path.getsize(args.dump_flash) & ~3
+            mode = "r+b" if resume else "wb"
             print(f"Dumping flash 0x{flash_start:08x}..0x{flash_end:08x} word-by-word "
-                  f"to {args.dump_flash}", flush=True)
-            import hashlib as _h
+                  f"to {args.dump_flash} (resume at +0x{resume:x})", flush=True)
             digest = _h.sha256()
             t0 = time.monotonic()
-            with open(args.dump_flash, "wb") as out:
-                address = flash_start
+            with open(args.dump_flash, mode) as out:
+                out.seek(resume)
+                address = flash_start + resume
                 while address < flash_end:
                     data = read_word_retry(address)
                     out.write(data)
@@ -665,11 +673,17 @@ def main(argv=None):
                     address += 4
                     done = address - flash_start
                     if done % 0x10000 == 0:
-                        rate = done / max(1e-6, time.monotonic() - t0)
+                        rate = (done - resume) / max(1e-6, time.monotonic() - t0)
                         eta = (flash_end - address) / max(1.0, rate)
                         print(f"  ...0x{address:08x} ({done // 1024} KiB, {rate / 1024:.1f} KiB/s, "
                               f"ETA {eta / 60:.1f} min)", flush=True)
-            print(f"Flash backup complete: {flash_end - flash_start} bytes, sha256 {digest.hexdigest()}")
+            size = _os.path.getsize(args.dump_flash)
+            whole = _h.sha256(open(args.dump_flash, "rb").read()).hexdigest()
+            if size >= flash_end - flash_start:
+                print(f"Flash backup complete: {size} bytes, sha256 {whole}")
+            else:
+                print(f"Flash backup PARTIAL: {size}/{flash_end - flash_start} bytes so far "
+                      f"(resume by rerunning); sha256-so-far {whole}")
         if args.poke is not None:
             if len(rom) < 2 or rom[0] != 0 or maker != 0x005D:
                 raise RuntimeError("Controller does not match this experiment; no write attempted")
