@@ -179,3 +179,34 @@ class MemoryWriteTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MemoryRangeValidationTests(unittest.TestCase):
+    def test_original_candidate_page_still_allowed(self):
+        self.assertEqual(
+            probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
+
+    def test_callback_vector_page_allowed(self):
+        # The 17-word vector at 0x285c14..0x285c54 (0x285c0c + 0x08..0x48).
+        self.assertEqual(
+            probe.validate_memory_range(0x00285c14, 17), (0x00285c14, 17))
+
+    def test_unaligned_start_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c15, 1)
+
+    def test_zero_or_too_many_words_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, 0)
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, probe.MAX_MEMORY_WORDS + 1)
+
+    def test_range_spanning_two_pages_rejected(self):
+        # A read may not straddle from one allowed page into another or the gap.
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00217ffc, 2)
+
+    def test_hang_addresses_remain_outside_every_page(self):
+        for bad in (0x000a0000, 0x0880a0a8):
+            with self.assertRaises(ValueError):
+                probe.validate_memory_range(bad, 1)

@@ -41,6 +41,16 @@ MEMORY_PROBE_ADDRESSES = (
 # This is an experiment boundary around the one responding address, not a
 # measured RAM map. Do not expand it into untested flash/peripheral windows.
 MEMORY_RANGE_START, MEMORY_RANGE_END = 0x00217000, 0x00218000
+# Pages a --read-range read may touch. Each is an experiment boundary around a
+# specific lead, not a measured RAM map: 0x217000 is the one address that
+# answered earlier; 0x285000 holds the USB callback vector at 0x285c0c traced in
+# FIRMWARE.md (slots +0x38/+0x48 are the descriptor handlers to resolve). A read
+# must stay inside ONE page. Do not expand into untested flash/peripheral
+# windows, and never target 0x000a0000 or 0x0880a0a8 (they hang the controller).
+MEMORY_READ_PAGES = (
+    (0x00217000, 0x00218000),
+    (0x00285000, 0x00286000),
+)
 MAX_MEMORY_WORDS = 256
 # idVendor/idProduct bytes as they appear inside a USB device descriptor
 # (little-endian 0b05, 1d70). Finding this in readable memory shows where the
@@ -204,8 +214,10 @@ def find_patch_base(blob, start, needle):
 def validate_memory_range(start, words):
     if start % 4 or not 1 <= words <= MAX_MEMORY_WORDS:
         raise ValueError(f"Use a four-byte-aligned START and 1..{MAX_MEMORY_WORDS} WORDS")
-    if not MEMORY_RANGE_START <= start < start + words * 4 <= MEMORY_RANGE_END:
-        raise ValueError("Range must remain in the candidate RAM page 0x00217000..0x00217fff")
+    end = start + words * 4
+    if not any(lo <= start < end <= hi for lo, hi in MEMORY_READ_PAGES):
+        pages = ", ".join(f"0x{lo:08x}..0x{hi - 1:08x}" for lo, hi in MEMORY_READ_PAGES)
+        raise ValueError(f"Range must stay within one allowed page ({pages})")
     return start, words
 
 
@@ -259,7 +271,7 @@ def main(argv=None):
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
     parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
     parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
-                        help="Read 1..256 four-byte words within candidate RAM page 0x00217000..0x00217fff")
+                        help="Read 1..256 four-byte words within one allowed RAM page (0x00217000..0x00217fff or 0x00285000..0x00285fff)")
     parser.add_argument("--map-memory", action="store_true",
                         help="Sample one word per 4 KB page over 0x0..0x400000 and report readable regions, read-only")
     parser.add_argument("--find-descriptor", nargs="*", metavar="ARG",
