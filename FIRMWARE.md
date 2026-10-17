@@ -470,3 +470,37 @@ is solved), but the absence of any audio capability in the stock firmware. The
 project's next phase is firmware development with a proper toolchain, not a flash
 edit of the stock image. No flash write should be attempted against the stock
 firmware toward this goal; it cannot succeed and can only brick the device.
+
+### CORRECTION, 2026-10-17: retracting two premature claims
+
+Two earlier claims in this file were wrong and are retracted:
+
+1. **"fc2a = flash write, fc2b = flash erase" is NOT established.** Testing fc29
+   directly (--flash-read) shows it returns the SAME bytes for offset 0x0,
+   0x1000, and 0x100000: `1f <len> 00 00 00` then a fixed `38 22 31 00 00 01 01
+   08 ...` block. fc29 ignores the address argument and reads a fixed
+   config/efuse structure, not addressable flash. So the fc29/fc2a/fc2b family
+   (messages 0x2007/0x2008/0x2009) operates on a config store, and the earlier
+   "host flash read/write/erase over USB" mapping was an unverified inference,
+   now falsified. There is currently NO confirmed host command that invokes the
+   ROM flash_nor_write/erase routines.
+
+2. **"The mapped flash is only 0x200000..0x225000 (148 KiB)" is wrong.** Isolated
+   reads succeed at 0x300000 (`1f 0f 0a 02`) and 0x3ffffc (`00 00 00 00`), so the
+   flash window spans much further; 0x225000 is a fault hole, not the end. The
+   follow-on "no audio capability" conclusion rested on only that first 148 KiB
+   and is therefore unproven. It is retracted until a complete image is read.
+
+What IS verified:
+- The ROM contains a real SPI NOR flash driver (flash_nor_read/write/erase,
+  W25Q16, 4K/64K sectors, geometry table at 0x280734) -- the firmware can write
+  its own flash internally.
+- fc61 reads memory-mapped flash but faults on holes (0x225000) and is flaky
+  under sustained hammering; it is not a reliable whole-chip imager.
+- The descriptor handler at 0x205ca2 and the EP0 path are real (independently
+  read and disassembled).
+
+Open, not yet solved: (a) a reliable full 2 MB flash image, (b) whether any host
+path (USB/HCI) can trigger a flash write, or whether that needs the UART pins,
+(c) therefore whether the audio-capability question can even be answered from the
+host. These were overclaimed before; this is the accurate state.
