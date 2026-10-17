@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Read BT600 identity, or inspect firmware-derived USB descriptor targets.
+"""Inspect BT600 USB objects and run bounded experiments with RAM restoration.
 
 Run from macOS Terminal with python3. Uses the existing Homebrew libusb.
 No firmware download, controller reset, kernel-driver detachment, or persistent
-write commands are issued. USB configuration 1 is temporarily selected only
+write commands are issued. --test-product-string temporarily writes one RAM
+word, reads the USB response, and restores the original in a finally block.
+--test-setup-marker temporarily installs a RAM trampoline on the setup callback,
+then restores the callback, helper words and marker. --capture-flash only reads.
+USB configuration 1 is temporarily selected only
 when the device is initially unconfigured, then the original state is restored.
 
 --descriptor-targets reads two addresses derived from ASUS's ROM-1 image and
@@ -18,6 +22,7 @@ import ctypes.util
 from datetime import datetime, timezone
 import json
 import hashlib
+import os
 from pathlib import Path
 import struct
 import time
@@ -174,6 +179,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--describe", action="store_true",
                         help="Print planned packets without accessing USB")
+    parser.add_argument("--setup-code-bytes", type=int, choices=(32, 1024), default=32,
+                        help="Prefix length for --setup-handler; stays within its flash page")
+    parser.add_argument("--quiet-memory", action="store_true", help="Suppress individual memory-word output")
+    parser.add_argument("--device-descriptor-index", type=int, choices=(0, 1), default=0,
+                        help="Use index 1 for an uncached comparison; traced firmware ignores the device index")
+    parser.add_argument("--flash-bytes", type=int, choices=(256, 4096, 65536, 2097152), default=256,
+                        help="Length for --capture-flash, starting at the actual 0x02000000 flash region")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--descriptor-targets", action="store_true",
                         help="Read the ASUS image's descriptor pointer and USB-ID config, then save the result")
@@ -181,8 +193,22 @@ def main():
                        help="Test the independently traced USB context/composite descriptor chain (at most seven words)")
     modes.add_argument("--usb-context", action="store_true",
                        help="Capture the 0x50-byte bind/setup context header, without following its fields (21 words maximum)")
+    modes.add_argument("--heap-descriptor", action="store_true",
+                       help="Check the complete descriptor/composite/driver objects found in the saved heap (12 words)")
+    modes.add_argument("--setup-handler", action="store_true",
+                       help="Read 32 bytes from the validated driver's actual setup callback (21 words total)")
+    modes.add_argument("--capture-flash", action="store_true",
+                       help="Capture actual flash-region bytes to a new binary; stop on the first failed word")
+    modes.add_argument("--test-setup-marker", action="store_true",
+                       help="Temporarily install a RAM marker trampoline on the validated USB setup callback, then restore")
+    modes.add_argument("--test-product-string", action="store_true",
+                       help="Temporarily change the validated descriptor's iProduct index from 2 to 1; always restore")
+    modes.add_argument("--test-template-string", action="store_true",
+                       help="Run the same restored iProduct test on the validated driver's template")
     args = parser.parse_args()
-    target_mode = args.descriptor_targets or args.active_descriptor or args.usb_context
+    target_mode = (args.descriptor_targets or args.active_descriptor or args.usb_context
+                   or args.heap_descriptor or args.setup_handler or args.capture_flash or args.test_setup_marker
+                   or args.test_product_string or args.test_template_string)
     if args.describe:
         for name, opcode, params in QUERIES:
             print(f"{name}: {(struct.pack('<HB', opcode, len(params)) + params).hex(' ')}")
@@ -195,6 +221,18 @@ def main():
             print("If C is aligned candidate RAM, read C+0x0c; follow only a 12 01 header, five descriptor words maximum.")
         if args.usb_context:
             print("Read R=*[0x002c1240]; if the full span fits candidate RAM, read R..R+0x4c (20 words). No field is followed.")
+        if args.heap_descriptor or args.setup_handler or args.test_product_string or args.test_template_string:
+            print("Check descriptor at 0x0030d18c, driver at *0x0030d1b0 and template at driver+4.")
+        if args.setup_handler:
+            print(f"Read callback at driver+0x34; follow only an odd pointer in 0x02000000..0x02200000 for {args.setup_code_bytes} code bytes.")
+        if args.capture_flash:
+            print(f"Read {args.flash_bytes} bytes at 0x02000000, within the selected 2 MiB flash region.")
+        if args.test_setup_marker:
+            print("Save zero scratch words at 0x00211f20 (28 bytes), marker 0x00211f00, and validated driver+0x34.")
+            print("Write a register-preserving marker stub, temporarily redirect setup to it, then restore callback first and all RAM.")
+        if args.test_product_string or args.test_template_string:
+            print("After exact EP0/heap checks, save the original composite/template word to JSON.")
+            print("Change only iProduct 2 -> existing string index 1, compare EP0, restore and compare again.")
         if target_mode:
             print("Standard GET_DESCRIPTOR: bmRequestType=80 request=06 value=0100 index=0000 length=18")
         return 0
@@ -244,7 +282,28 @@ def main():
               "descriptor_targets_requested": args.descriptor_targets,
               "active_descriptor_requested": args.active_descriptor,
               "usb_context_requested": args.usb_context,
+              "heap_descriptor_requested": args.heap_descriptor,
+              "setup_handler_requested": args.setup_handler,
+              "flash_capture_requested": args.capture_flash,
+              "setup_marker_test_requested": args.test_setup_marker,
+              "product_string_test_requested": args.test_product_string,
+              "template_string_test_requested": args.test_template_string,
+              "device_descriptor_test_index": args.device_descriptor_index,
               "started_utc": datetime.now(timezone.utc).isoformat()}
+    target = None
+    if target_mode:
+        output = Path(__file__).resolve().parent / "results"
+        output.mkdir(exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = output / f"bt600-targets-{stamp}.json"
+
+    def checkpoint():
+        temporary = target.with_suffix(".tmp")
+        with temporary.open("w") as saved:
+            saved.write(json.dumps(result, indent=2) + "\n")
+            saved.flush()
+            os.fsync(saved.fileno())
+        temporary.replace(target)
     try:
         checked(usb.libusb_init(C.byref(context)), "Initialize libusb")
         initialized = True
@@ -318,7 +377,12 @@ def main():
         if target_mode:
             if result["queries"]["rom_version"]["rom_version"] != 1:
                 raise RuntimeError("Descriptor targets are derived only for ROM 1 / ECO 2")
-            mode = "context" if args.usb_context else "active" if args.active_descriptor else "template"
+            mode = ("setup-marker-test" if args.test_setup_marker else
+                    "flash-capture" if args.capture_flash else "setup-handler" if args.setup_handler else
+                    "template-string-test" if args.test_template_string else
+                    "product-string-test" if args.test_product_string else
+                    "heap" if args.heap_descriptor else "context" if args.usb_context else
+                    "active" if args.active_descriptor else "template")
             target_report = {"reads": [], "mode": mode}
             result["descriptor_targets"] = target_report
             standard_buffer = C.create_string_buffer(18)
@@ -328,8 +392,16 @@ def main():
             standard = standard_buffer.raw[:size]
             compare_descriptor(target_report, standard)
 
+            def get_descriptor():
+                buf = C.create_string_buffer(18)
+                size = checked(usb.libusb_control_transfer(
+                    handle, 0x80, 6, 0x0100 | args.device_descriptor_index, 0,
+                    buf, 18, 2000), "GET_DESCRIPTOR device")
+                return buf.raw[:size]
+
             def read_word(address):
-                print(f"Reading memory 0x{address:08x}...", flush=True)
+                if not args.quiet_memory:
+                    print(f"Reading memory 0x{address:08x}...", flush=True)
                 record = {"address": f"0x{address:08x}"}
                 target_report["reads"].append(record)
                 try:
@@ -339,10 +411,53 @@ def main():
                 except (Exception, KeyboardInterrupt) as error:
                     record["error"] = str(error) or "Interrupted by user"
                     raise
-                print(f"  {data.hex(' ')}", flush=True)
+                if not args.quiet_memory:
+                    print(f"  {data.hex(' ')}", flush=True)
                 return data
 
-            if args.usb_context:
+            def write_word(address, data):
+                record = {"address": f"0x{address:08x}", "data": data.hex(" ")}
+                target_report.setdefault("writes", []).append(record)
+                try:
+                    reply = hci(0xFC62, struct.pack("<BI", 0x20, address) + data)
+                    record["reply"] = reply.hex(" ")
+                    if not reply or reply[0]:
+                        raise RuntimeError(f"Descriptor write rejected: {reply.hex(' ')}")
+                except (Exception, KeyboardInterrupt) as error:
+                    record["error"] = str(error) or "Interrupted"
+                    raise
+
+            if args.test_setup_marker:
+                import setup_marker
+                result["setup_marker_sha256"] = hashlib.sha256(
+                    Path(setup_marker.__file__).read_bytes()).hexdigest()
+                setup_marker.test_setup_marker(read_word, write_word, get_descriptor,
+                                               target_report, checkpoint)
+            elif args.capture_flash:
+                import capture_flash
+                result["capture_flash_sha256"] = hashlib.sha256(
+                    Path(capture_flash.__file__).read_bytes()).hexdigest()
+
+                def read_flash_word(address):
+                    return memory_data(hci(0xFC61, struct.pack("<BI", 0x20, address)), address)
+
+                capture_flash.capture_flash(
+                    read_flash_word, target.with_suffix(".bin"), args.flash_bytes,
+                    target_report, checkpoint)
+            elif args.heap_descriptor or args.setup_handler or args.test_product_string or args.test_template_string:
+                import descriptor_edit
+                result["descriptor_edit_sha256"] = hashlib.sha256(
+                    Path(descriptor_edit.__file__).read_bytes()).hexdigest()
+                if args.setup_handler:
+                    descriptor_edit.inspect_setup_handler(
+                        read_word, standard, target_report, args.setup_code_bytes)
+                elif args.test_product_string or args.test_template_string:
+                    descriptor_edit.test_product_string(
+                        read_word, write_word, get_descriptor, target_report, checkpoint,
+                        template=args.test_template_string)
+                else:
+                    descriptor_edit.inspect_heap_descriptor(read_word, standard, target_report)
+            elif args.usb_context:
                 inspect_usb_context(read_word, target_report)
             elif args.active_descriptor:
                 inspect_active_descriptor(read_word, target_report)
@@ -373,11 +488,7 @@ def main():
     result["finished_utc"] = datetime.now(timezone.utc).isoformat()
     if target_mode:
         try:
-            output = Path(__file__).resolve().parent / "results"
-            output.mkdir(exist_ok=True)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-            target = output / f"bt600-targets-{stamp}.json"
-            target.write_text(json.dumps(result, indent=2) + "\n")
+            checkpoint()
             print(f"Saved result: {target}", flush=True)
         except OSError as error:
             failed = True

@@ -1,5 +1,28 @@
 # RTL8761C firmware notes
 
+## Live descriptor control and setup handler — 2026-10-17
+
+A restored edit of `iProduct` at composite descriptor word `0x0030d198` changed
+byte 15 of the actual USB reply from 2 to 1. Result:
+`results/bt600-targets-20261017T101804.507832Z.json`. Both RAM and USB response
+returned to baseline afterward. GET_DESCRIPTOR index 0 returned cached host data;
+index 1 reached the device. The running code ignores the low descriptor index
+for device descriptors. Use that request distinction for future bench tests.
+
+The driver object at `0x0030d130` has setup callback `0x020be8a1` at offset 0x34.
+A targeted 1 KiB read of entry `0x020be8a0` succeeded over fc61. Compare with ASUS
+application offset `0x2218c`, linked at `0x0218958c`: 1000/1024 bytes are identical.
+The live GET_DESCRIPTOR path at `0x020be962..0x020be986` serves `C+0x0c`, refreshing
+configuration count and EP0 maximum packet size. The standard-request dispatch
+is at `0x020be92e`. Saved code and annotated disassembly are in
+`results/runtime-setup/`; source JSON is `...101448.581977Z.json`.
+
+The host stack's control-transfer implementation calls IOKit DeviceRequestAsyncTO;
+its cached descriptor helper is a separate path. The observed index distinction
+is recorded as behavior of this macOS/device combination rather than assumed
+from the libusb API name. Source:
+https://github.com/libusb/libusb/blob/master/libusb/os/darwin_usb.c
+
 ## Current corrections — 2026-10-17
 
 Read this section before the chronological research below.

@@ -1,3 +1,62 @@
+# Current continuation — 2026-10-17
+
+## USB descriptor edit succeeded
+
+Branch `codex/bt600-descriptor-targets` now merges Claude development through
+`e549116` and preserves Codex's earlier probe/capture work. Earlier conclusions
+below about descriptor absence and exhaustion of USB options are superseded.
+
+The live composite/driver/template chain matched the saved image:
+`C=0x0030d180`, device descriptor at `C+0x0c`, `D=*[C+0x30]=0x0030d130`, and
+template `*[D+4]=0x0030d110`. The guarded read is saved as
+`results/bt600-targets-20261017T101232.957104Z.json`.
+
+A temporary product-string edit at `0x0030d198` read back correctly but the usual
+GET_DESCRIPTOR reply stayed unchanged. A template edit also stayed invisible.
+The running setup code clarified that this object really supplies the reply.
+Using device descriptor index 1, which this firmware ignores, bypassed the host's
+cached index-0 reply. The next edit **changed the USB response at byte 15 only**:
+
+- Original RAM word: `00 02 01 02`.
+- Temporary word: `00 02 01 01` (iProduct refers to existing manufacturer string).
+- USB response temporarily contained `... 00 02 01 01 00 01`.
+- Original RAM word and baseline USB descriptor both restored; configuration zero
+  restored too. No reset or firmware download was required.
+
+Successful result: `results/bt600-targets-20261017T101804.507832Z.json`.
+The preceding negative index-0 tests are preserved as `...101239.708137Z.json`
+and `...101319.355706Z.json`; do not repeat them without a new question.
+
+## Actual running setup code is readable
+
+The live setup pointer at `D+0x34=0x0030d164` is `0x020be8a1` (Thumb entry
+`0x020be8a0`). A 32-byte read succeeded; a targeted 1024-byte capture succeeded
+in `results/bt600-targets-20261017T101448.581977Z.json`. Its first 32 bytes match
+the public ASUS image exactly, and 1000/1024 bytes match at the analogous handler.
+Offline files are in `results/runtime-setup/`.
+
+The actual code at `0x020be962..0x020be986` copies the descriptor at `C+0x0c`
+into the control-response buffer. `0x020be92e` dispatches standard requests.
+The flash driver's address region begins at `0x02000000`, not `0x00200000`.
+A 256-byte read of that region's start succeeded (erased bytes, no gaps).
+A full 2 MiB capture is running separately; inspect its live process and result
+before starting another USB command. Its report is
+`results/bt600-targets-20261017T101939.145845Z.json` and log is
+`results/real-flash-full.log`. Do not confuse it with the earlier CPU-memory file.
+
+## Prepared next experiment
+
+`--test-setup-marker --device-descriptor-index 1` will temporarily redirect the
+validated USB setup callback to a 28-byte RAM trampoline. It writes marker
+`0xd47a6001` then tail-calls the original handler, preserving argument registers,
+stack, LR and flags. The code is tested in a Unicorn ARM emulator, including the
+marker write and tail call. It has not yet run on the dongle.
+
+The helper borrows only zero-filled words at `0x00211f20` and marker word
+`0x00211f00`, saves all originals before writing, and restores the callback before
+removing the helper. If the scratch words are in use it stops. The prior fc20
+entry-hook attempts are a different experiment and do not need repeating.
+
 # Session notes — 2026-10-17
 
 ## Where we are
