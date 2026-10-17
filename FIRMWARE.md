@@ -649,3 +649,30 @@ an open RE problem on this chip), or a different approach. The sibling-chip (B)
 work succeeded partly because its patch-RAM (0x80xxxxxx) was readable; the CU's
 equivalent regions are not, with the tools found so far. The shippable Track A
 (Raspberry Pi iPod-gadget + Bluetooth A2DP sink) does not depend on any of this.
+
+### Read-primitive hunt exhausted over USB, 2026-10-17
+
+Tried to find any way to read 0x100000..0x200000 (where the patch-apply code and
+the patch-RAM live) over USB:
+
+- fc61 at 0x100000 does not soft-reject; it hangs the controller (USB timeout,
+  needs replug), like 0xa0000 / 0x0880a0a8. So that region is outside fc61's
+  read path entirely, not just bounds-checked. Access-byte variants are moot once
+  it hangs.
+- fc2c, disassembled, reads 5 fields and posts to the SAME config/flash task
+  queue as fc29/fc2a/fc2b (0x2007-0x200a) -- it is a config/flash op on the fixed
+  store, not a general memory reader.
+- fc6b / fc6d / fc7e are info/misc, not memory readers.
+
+So no vendor command available over USB can read the 0x100000..0x200000 code bank
+or the patch-RAM. fc61 (the only general reader) hangs there. The region is
+likely execute-only or on a bus the fc61 reader cannot touch. Reading it by
+executing code there is circular (running code needs the apply mechanism we can't
+read).
+
+Conclusion for the dongle over USB: blocked. We can deliver a modified patch
+safely, but we cannot read the apply mechanism, cannot verify injected code, and
+have no read path to the regions that matter. The remaining dongle route is the
+hardware UART programming pins (Realtek's intended flash interface), which can
+reach what USB cannot but requires opening the dongle and wiring to those pins.
+Track A (Pi iPod-gadget + Bluetooth sink) needs none of this.
