@@ -124,9 +124,14 @@ def dispatch_hit(insn):
 
 def disassemble(blob, base):
     """Linear Thumb sweep. Data interleaved with code mis-decodes locally, but
-    the constant/literal/dispatch hits we collect still surface the builder."""
+    the constant/literal/dispatch hits we collect still surface the builder.
+
+    skipdata keeps the sweep going past a byte capstone cannot decode; without
+    it the linear scan halts at the first literal pool (around 0x1700 here) and
+    the whole image past that point is never examined."""
     md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
     md.detail = True
+    md.skipdata = True
     immediates, literals, dispatches = [], [], []
     for insn in md.disasm(blob, base):
         for value in immediate_hits(insn):
@@ -162,6 +167,65 @@ def find_all(blob, base, needle):
         start = index + 1
 
 
+def captured_descriptors(target):
+    """Return the raw descriptor bytes saved alongside a capture dir, if any.
+
+    Returns a dict name -> bytes for every descriptor whose .bin file is present
+    (device.bin, configuration_0.bin, ...). Empty for a raw .bin target.
+    """
+    path = Path(target)
+    if not path.is_dir():
+        return {}
+    try:
+        report = json.loads((path / "capture.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for name, meta in report.get("descriptors", {}).items():
+        blob_path = path / meta.get("file", "")
+        if blob_path.is_file():
+            out[name] = blob_path.read_bytes()
+    return out
+
+
+def descriptor_fragments(descriptors):
+    """Distinctive multi-byte needles to search the ROM for.
+
+    Single USB constants (VID, PID, a length+type halfword) are too short to pin
+    a 32-bit image; they match unrelated words and table offsets. Multi-byte runs
+    taken from the real descriptors are specific. Built from the captured bytes
+    when present, else from the known BT600 layout.
+    """
+    needles = []
+    cfg = descriptors.get("configuration_0")
+    dev = descriptors.get("device")
+    if cfg and len(cfg) >= 6:
+        needles.append(("config header 09 02 wTotalLength..", cfg[:6]))
+    if cfg:
+        # The ascending isochronous wMaxPacketSize values, one per alt setting,
+        # are the single most distinctive run in this device.
+        iso = bytes(cfg[i + 4] for i in range(len(cfg) - 6)
+                    if cfg[i] == 0x07 and cfg[i + 1] == 0x05 and (cfg[i + 2] & 0x80))
+        seen, iso_sizes = set(), []
+        for b in iso:
+            if b not in seen:
+                seen.add(b)
+                iso_sizes.append(b)
+        if len(iso_sizes) >= 3:
+            needles.append(("ascending iso wMaxPacketSize run", bytes(iso_sizes)))
+    if dev and len(dev) >= 8:
+        needles.append(("device header 12 01 bcdUSB class..", dev[:8]))
+    if not needles:
+        # Fallback: the BT600 stock bytes, in case no capture dir was given.
+        needles = [
+            ("config header 09 02 c8 00 02 01", bytes([0x09, 0x02, 0xc8, 0x00, 0x02, 0x01])),
+            ("ascending iso wMaxPacketSize run", bytes([0x00, 0x09, 0x11, 0x19, 0x21, 0x31, 0x3f])),
+            ("device header 12 01 10 01 e0 01 01 40",
+             bytes([0x12, 0x01, 0x10, 0x01, 0xe0, 0x01, 0x01, 0x40])),
+        ]
+    return needles
+
+
 def line(insn):
     return f"0x{insn.address:08x}: {insn.mnemonic:<8} {insn.op_str}"
 
@@ -172,6 +236,8 @@ def main(argv=None):
     parser.add_argument("--base", type=lambda v: int(v, 0), default=0x00001000,
                         help="load address of a raw .bin (default 0x00001000; ignored for a capture dir)")
     parser.add_argument("--context", type=int, default=3, help="instructions of context around each hit")
+    parser.add_argument("--no-fragments", action="store_true",
+                        help="skip the multi-byte descriptor-fragment scan")
     args = parser.parse_args(argv)
 
     blob, base = load_image(args.target, args.base)
@@ -185,11 +251,27 @@ def main(argv=None):
     if not immediates:
         print("  none")
 
-    print(f"\n== PC-relative literal loads of descriptor constants ({len(literals)}) ==")
-    for insn, (literal_va, word, label) in literals:
+    # A literal is STRONG only when the whole 32-bit word is a target. When just
+    # a halfword matched, the word is usually an address or an unrelated constant
+    # (e.g. 0x00281d70, a function-pointer slot whose low half is 0x1d70), so it
+    # is reported separately and not treated as a descriptor-builder lead.
+    strong = [(i, h) for i, h in literals if "halfword" not in h[2]]
+    weak = [(i, h) for i, h in literals if "halfword" in h[2]]
+
+    print(f"\n== Strong literal loads (full word is a descriptor constant) ({len(strong)}) ==")
+    for insn, (literal_va, word, label) in strong:
         print(f"  {line(insn)}")
         print(f"      literal @0x{literal_va:08x} = 0x{word:08x}  <- {label}")
-    if not literals:
+    if not strong:
+        print("  none")
+
+    print(f"\n== Weak halfword matches (coincidental; a target is only a sub-halfword) ({len(weak)}) ==")
+    for insn, (literal_va, word, label) in weak[:20]:
+        note = "  (word is address-like -> pointer constant, not descriptor bytes)" if word >= 0x00100000 else ""
+        print(f"  {line(insn)}  literal @0x{literal_va:08x} = 0x{word:08x}  <- {label}{note}")
+    if len(weak) > 20:
+        print(f"  ... and {len(weak) - 20} more")
+    if not weak:
         print("  none")
 
     print(f"\n== Setup-dispatch comparisons (bRequest/bmRequestType) ({len(dispatches)}) ==")
@@ -198,30 +280,40 @@ def main(argv=None):
     if not dispatches:
         print("  none")
 
+    fragments = []
+    if not args.no_fragments:
+        needles = descriptor_fragments(captured_descriptors(args.target))
+        print(f"\n== Multi-byte descriptor-fragment scan ({len(needles)} needles) ==")
+        for label, needle in needles:
+            hits = find_all(blob, base, needle)
+            fragments += hits
+            shown = " ".join(f"0x{va:08x}" for va in hits[:8]) if hits else "none"
+            print(f"  {label} [{needle.hex()}]: {len(hits)} hit(s)  {shown}")
+
     raw = raw_scan(blob, base)
-    print(f"\n== Raw little-endian occurrences in image ({len(raw)}) ==")
-    for va, size, value, label in raw:
+    print(f"\n== Raw little-endian occurrences in image ({len(raw)}, showing first 30) ==")
+    for va, size, value, label in raw[:30]:
         width = size * 2
         print(f"  0x{va:08x}: {value:0{width}x}  <- {label}")
+    if len(raw) > 30:
+        print(f"  ... and {len(raw) - 30} more (noise at this width)")
     if not raw:
         print("  none")
 
-    code_refs = {lit[0] for _, lit in literals}
-    vidpid = [va for va, size, value, _ in raw if value in (0x0B05, 0x1D70) or value in WORD_TARGETS]
     print("\n== Where to read next ==")
-    if literals:
-        print("  Open the functions containing the literal loads above: those are the")
-        print("  descriptor builders. Walk back to the function entry, then find the")
-        print("  caller that reaches it from a GET_DESCRIPTOR (bRequest==6) dispatch.")
-    elif vidpid:
-        print("  No code referenced the VID/PID via a resolved literal, but the bytes")
-        print(f"  appear raw at: {', '.join(f'0x{va:08x}' for va in vidpid[:8])}")
-        print("  Disassemble around those addresses; the reference may be computed")
-        print("  (ADD/ADR) rather than a plain PC-relative LDR.")
+    if fragments:
+        print("  A multi-byte descriptor fragment was found in the ROM. Disassemble")
+        print("  around those addresses; code that references the fragment is the")
+        print("  descriptor source. Walk back to the enclosing function entry.")
+    elif strong:
+        print("  Open the functions containing the strong literal loads above and")
+        print("  walk back to the function entry; that is the descriptor-builder lead.")
     else:
-        print("  VID/PID not found as immediates, literals, or raw bytes. The device")
-        print("  descriptor is likely assembled from a table in USB-peripheral memory")
-        print("  (the region that hangs fc61), not from this ROM image.")
+        print("  No descriptor fragment and no strong constant load. Single USB")
+        print("  constants (VID/PID/length+type) are too short to pin this image and")
+        print("  match unrelated words. The descriptors are assembled at enumeration,")
+        print("  not stored here: dump the 0x00210000 RAM window while audio is")
+        print("  streaming and diff it against the idle dump to catch the buffers.")
     return 0
 
 

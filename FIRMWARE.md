@@ -106,3 +106,63 @@ Realtek's datasheet lists an ARMv8M Real-M300 core and shows ROM/RAM/FLASH. It d
 - [Realtek RTL8761C tools listing](https://www.realmcu.com/en/Resources/Tools/RTL8761C-Series)
 - [Research memory-reader source](https://github.com/darkmentorllc/DarkFirmware_real_i/blob/master/04_custom_patch_writer/RTL8761B_usbbluetooth_Memory_Reader.py)
 - [Researchers' newer Bluetooth firmware analysis tooling](https://github.com/darkmentorllc/bt-re-mad-skillz) (reference only; not installed or launched by this project)
+
+### ROM constant-scan result, 2026-10-17
+
+Ran `rom_analyze.py` on the 647168-byte ROM block
+(`results/descriptor-20261017T002154.077318Z`, `0x00001000..0x0009f000`). The
+byte-constant heuristics do **not** locate the descriptor builder in this image;
+their hits are coincidental. Checked each class against the actual code:
+
+- **"PID 0x1d70" literals (49x, e.g. 0x27068).** The matched word is
+  `0x00281d70`, used as a pointer, not a USB PID. At `0x00026c70` the code is
+  `ldr r3,[pc]=0x281d70 ; ldr r3,[r3] ; blx r3` — it loads the word stored at
+  address `0x00281d70` and calls it. `0x1d70` is only the low halfword of that
+  address, which sits outside this ROM window. Every "PID" hit is this idiom.
+- **"config-sig 0x0209" immediates (0x90f86, 0x982c8).** Both are
+  `movw rN,#0x209 ; add.w rN,rN,rK,lsl#3 ; ldrb rN,[base,rN]` — `0x209` is a
+  byte-table offset, not a `bLength 0x09 / bDescriptorType 0x02` signature.
+- **"device-class 0x01e0" and bare-halfword hits.** These are low or high
+  halfwords of unrelated 32-bit words, not descriptor bytes.
+
+The ROM region is genuine ARM Thumb code (256k+ instructions decode cleanly,
+with regular `push {..,lr}` / `pop {..,pc}` prologues), so the problem is the
+heuristic, not the image. Two- and three-byte USB constants are too common to
+pin a 32-bit RISC image. This agrees with the earlier result that the assembled
+descriptors are not a contiguous blob in any `fc61`-readable region: they are
+built at enumeration, and single-constant matching will not find the builder.
+
+### USB descriptor ground truth (from the captured bytes, not disassembly)
+
+Parsed `configuration_0.bin` directly. The stock dongle enumerates as its
+Bluetooth HCI controller, class `e0/01/01` (Wireless / RF / Bluetooth), two
+interfaces:
+
+- **Interface 0, alt 0:** interrupt IN `0x81` (HCI events, 64 B), bulk OUT
+  `0x02` / bulk IN `0x82` (ACL data, 64 B each). bInterval 1 on the interrupt EP.
+- **Interface 1, alts 0-6:** isochronous IN `0x83` and iso OUT `0x03`, one alt
+  per SCO voice bandwidth. `wMaxPacketSize` climbs 0, 9, 17, 25, 33, 49, 63
+  bytes across the alt settings; bInterval 1 (one packet per 1 ms frame).
+
+So the largest stock isochronous packet is **63 bytes/frame**, and it is an HCI
+**SCO voice** endpoint, not a music-streaming endpoint. The car's USB input
+wants an iPod/iAP or USB-audio device, which is a different device class
+entirely; reshaping this HCI config is not the same as bumping one SCO alt.
+
+On the 192 bytes/ms question: full-speed isochronous allows up to 1023
+bytes/frame, so 192 B/frame (48 kHz x 16-bit x 2 ch = 192 B/ms) is well within
+the USB budget. The constraint is not the bus. It is that the bytes must come
+from a UAC1 streaming endpoint the firmware actually fills, which this stock
+image does not expose. That endpoint has to be created, not resized.
+
+### Better way to find the builder next
+
+Single USB constants are too short. Search the ROM for the **distinctive
+multi-byte fragments** of the real descriptors instead (config header
+`09 02 c8 00 02 01`, the `09 04 ..` interface records, the ascending iso-size
+table `00 09 11 19 21 31 3f`), and for code that references wherever those live.
+`rom_analyze.py` now has a `--fragments` scan for exactly this; on this ROM it
+reports none, which is the same negative result by a sharper method. The
+remaining positive lead is to dump the `0x00210000` RAM window while audio is
+actively streaming and diff it against the idle dump, to catch the descriptor
+and endpoint buffers while they are populated.
