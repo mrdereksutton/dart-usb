@@ -142,3 +142,89 @@ present as something the car accepts. Approach: dump/compare RAM around
 enumeration, or search RAM (read) for the assembled 18-byte device-descriptor
 pattern (`12 01 00 02 e0 01 01 ...`) rather than just the VID/PID, in all byte
 orders, across the readable RAM region.
+
+---
+
+## Session handoff — 2026-10-17 (Opus 4.8)
+
+This session mapped the firmware modification path end to end, found the public
+prior art, and established the hard limits. It also corrected two wrong claims
+made mid-session; read FIRMWARE.md top-to-bottom, the later "CORRECTION" and
+"command discovery" sections supersede earlier ones.
+
+### Verified this session (independently read from hardware + ROM)
+
+- **EP0 / descriptor path.** The dongle builds its USB descriptors dynamically at
+  enumeration (no static descriptor blob anywhere readable). Chain: EP0 handler
+  `0x3c14c` -> callback vector at `0x285c0c+0x38` -> descriptor handler `0x205ca2`
+  -> per-device context (pointer at `*0x285254`, stride `0x440`) and RAM handler
+  tables. Captured descriptors parsed in FIRMWARE.md: it enumerates as a Bluetooth
+  HCI controller, class e0/01/01, iso endpoints are SCO voice (max 63 B/frame).
+- **Flash.** Winbond W25Q16, 2 MB, memory-mapped for reads at `0x200000`. fc61
+  reads one 32-bit word per command and faults on unmapped holes (e.g. 0x225000),
+  dropping the device (it re-enumerates). ROM has a full SPI flash driver; vtable
+  at `0x20180` (read `0xcbb4`, write `0xcc34`, erase, DMA). Geometry table at
+  `0x280734`; chip params `0x280374`.
+- **Host vendor commands.** fc20 (download patch, RAM), fc61 (read mem), fc62
+  (write mem, RAM), fc6b/fc6d (info), fc29/fc2a/fc2b (config read/write/erase of a
+  FIXED block — fc29 ignores its address arg), fc2c, fc7e.
+- **Chip audio.** ROM has real BT audio-link machinery: SCO/eSCO voice
+  (`audio_sniff_*`, `lc_*esco*`) and LE Audio ISO (`ll_iso_*`, `bz_isoch_*`).
+
+### Corrected / retracted (do not trust the superseded versions)
+
+- fc62 RAM writes do NOT persist: proven by poking a marker and replugging.
+- fc29/fc2a/fc2b are NOT general flash read/write/erase (earlier inference was
+  wrong). fc29 returns a fixed config/efuse block regardless of address.
+- The flash is NOT "only 148 KiB"; reads succeed at 0x300000/0x3ffffc, with holes.
+
+### Hard limits established
+
+- **No safe, confirmed way to write the dongle's permanent memory over USB.** RAM
+  writes are wiped on power cycle. The flash driver has no static USB front door
+  (called via a RAM-installed pointer). The config-write commands (fc2a/fc2b)
+  might persist but could be write-once efuse — blind probing risks a permanent
+  brick. The config field map is Realtek-internal.
+- The car power-cycles the dongle every start, so RAM patches and host-downloaded
+  firmware (the fc20 path) cannot change what the car sees; only a flash/efuse
+  change would, and there is no safe host route to it.
+- Making it a car audio bridge needs: an A2DP/LE-Audio SINK + decode, a USB-Audio
+  (or iAP) presentation, AND persistence — none present in stock firmware, and
+  the sink firmware is vendor-gated (Realtek RealMCU SDK).
+
+### Prior art to build on (PRIOR_ART.md)
+
+- Dark Mentor LLC / Xeno Kovah, "Reverse engineering Realtek RTL8761B* Bluetooth
+  chips" (Hardwear.io 2025 / DistrictCon 2026):
+  https://github.com/darkmentorllc/DarkFirmware_real_i — Ghidra analysis, config
+  Kaitai parser, vendor-command DB (Bumble fork), memory reader, patch writer.
+  NOTE: that work is the RTL8761B (MIPS core); this dongle is RTL8761CU (ARM), so
+  their binaries/ASM do not run on it, but the method and config format transfer.
+  Their custom firmware is ephemeral (host re-downloads each boot) — they did not
+  solve standalone persistence either.
+
+### Tooling added this session (all in bt600_probe.py, tests in test_probe.py)
+
+- `--dump-flash OUT` (resumable, page-skips fault holes, records OUT.gaps)
+- `--poke ADDR VALUE` (guarded persistent single-word write, whitelisted pages)
+- `--flash-read OFFSET LEN` (fc29 debug)
+- `--read-range` whitelist widened to flash + the config/RAM pages used here.
+
+### Local-only artifacts (not in git, on this Mac)
+
+- Partial flash backup (0x200000..0x225000, 148 KiB, verified; handler sector
+  included) under `results/flash-backup/` (gitignored).
+- Dark Mentor repo cloned in the session scratch dir (external code; not committed).
+
+### Next steps (pick one)
+
+1. **UART reflash route (the real persistence path).** The chip documents UART
+   flash-programming pins; this is Realtek's intended, non-brick-prone way to
+   write flash. Needs opening the dongle and wiring to those pins, plus Realtek's
+   tool or a driver of the flash routines we mapped.
+2. **Config-write persistence test (risky).** Back up config via fc29, then test
+   whether an fc2a write survives a replug. Brick risk if the store is write-once
+   efuse; do only with that risk accepted.
+3. **Purpose-built hardware.** A standalone Bluetooth-to-USB-audio receiver (the
+   Creative BT-W / Sennheiser BTD 600 architecture) reaches the music goal without
+   this reverse-engineering; fastest path if the goal is just audio in the car.
