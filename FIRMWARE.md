@@ -166,3 +166,53 @@ reports none, which is the same negative result by a sharper method. The
 remaining positive lead is to dump the `0x00210000` RAM window while audio is
 actively streaming and diff it against the idle dump, to catch the descriptor
 and endpoint buffers while they are populated.
+
+### EP0 standard-request path located, 2026-10-17
+
+Found the EP0 control path by its request-code structure, not by byte constants.
+A window around `0x0003c1de` compares `bRequest` against the full standard
+device-request set (CLEAR/SET_FEATURE 3, SET_ADDRESS 5, GET/SET_DESCRIPTOR 6/7,
+GET/SET_CONFIG 8/9, GET/SET_INTERFACE 10/11). The surrounding block
+`0x0003c14c..0x0003cb60` is the device-request handler. All addresses below are
+read from the ROM dump; the `0x28xxxx` targets are pointers into the runtime data
+region and have not been read yet.
+
+- **USB device context.** Reached through the pointer at `0x00285254`:
+  `ctx = *0x00285254 + devindex * 0x440` (the code is `r0*17 << 6`). Every
+  EP0 function indexes this array.
+- **Per-request state tables.** `0x0003c20c` and `0x0003c256` read/write a 3-bit
+  field per `bRequest` in packed registers at context offsets `0x1cc..0x1d4`.
+  These track request progress; they are not the descriptor source.
+- **Control-transfer descriptor state.** At context offset `0x298`: the descriptor
+  type is byte `+0x14`, the returned length is word `+4` (handler `0x0003ca8c`).
+- **Descriptor selector.** `0x0003cad6` maps an internal 1/2/3 selector to the
+  descriptor message IDs `0x2ca`, `0x2c8`, `0x2c9` and tail-calls `0x00076b7c`
+  through the table at `0x00283e84`.
+- **Descriptor delivery is a runtime callback, not ROM bytes.** `0x00076b7c`
+  loads a callback from `*(0x00285c0c + 0x48)` and calls it (`blx r7`) to produce
+  the descriptor, falling back to `0x00076b1e`. The callback pointer lives in the
+  `0x28xxxx` data region and is registered at run time. This is why the device
+  and configuration descriptors are not stored verbatim anywhere `fc61` reads:
+  they are emitted by a registered handler, keyed by message ID, from RAM state.
+
+So changing what the dongle enumerates as means changing that registered handler
+or the data it reads, both in the `0x28xxxx` region, not patching a ROM table.
+
+### Next experiment (Mac, read-only, bounded)
+
+The `0x28xxxx` region is live: ROM code already loads `*0x00281d70` as a function
+pointer and calls it, so that bank is mapped and callable at run time. Read a
+small set of words there with `fc61` to resolve the runtime pointers and find the
+registered descriptor callback:
+
+    0x00285254   USB device-context array pointer
+    0x00285c0c   base holding the descriptor callback at +0x48
+    0x00283e84   descriptor-message dispatch table
+    0x0028598c   referenced by the callback bus
+
+The current `--read-range` reader is whitelisted to `0x00217000..0x00217fff`;
+widen it to cover `0x00283000..0x00286000` for this one read, a few aligned words
+at a time, stopping on the first failed read (as the existing reader does). Do not
+read `0x000a0000` or `0x0880a0a8`; those hang the controller. If `0x28xxxx` reads
+clean, the word at `0x00285c0c + 0x48` is the descriptor handler to disassemble
+next (it will point back into ROM, within this dump, so it can be read offline).
