@@ -73,6 +73,7 @@ The current work is identifying how the RTL8761C controller loads code, accesses
 - [HARDWARE.md](HARDWARE.md): the dongle's actual USB/HCI responses.
 - [FIRMWARE.md](FIRMWARE.md): stock image layout, sources, and the ARM disassembly question.
 - [bt600_probe.py](bt600_probe.py): the working version probe and experimental upload/read options.
+- [rom_analyze.py](rom_analyze.py): disassemble a saved ROM dump offline to find the descriptor/EP0 builder by its constants.
 - [USB_BRIDGE.md](USB_BRIDGE.md): USB audio/iAP implementation references and the hardware work needed to port them.
 - [IPOD_REFERENCE.md](IPOD_REFERENCE.md): use the owner's iPod Classic as a USB/car reference.
 - [IPOD_PROTOCOL.md](IPOD_PROTOCOL.md): published iPod Classic firmware, USB/iAP startup, and metadata/control commands.
@@ -140,6 +141,26 @@ those structures were absent from the captured window at that time.
 The chat process cannot open raw USB; normal Terminal can. Saved results can be
 read locally without copying Terminal output into chat. Raw captures are excluded
 from Git.
+
+### Reverse the descriptor builder
+
+The USB descriptors are not stored as a contiguous blob anywhere `0xfc61` can read:
+a full `0x00001000..0x0009efff` dump searched in four word layouts matched nothing.
+They are built by firmware code. `rom_analyze.py` reverses that code offline, by its
+constants rather than its bytes. It disassembles the saved ROM image in Thumb mode and
+reports where the VID `0x0b05` / PID `0x1d70` and the descriptor length+type signatures
+are loaded (as `MOVW` immediates or PC-relative literals), plus the setup-packet
+comparisons against `bRequest == 0x06` (GET_DESCRIPTOR). Those sites are the EP0
+descriptor callbacks.
+
+```bash
+pip3 install capstone    # one-time; the only extra dependency
+python3 rom_analyze.py results/descriptor-TIMESTAMP      # a capture dir (reads its base)
+python3 rom_analyze.py path/to/ram.bin --base 0x00001000 # or a raw .bin
+```
+
+It reads a file only and never opens USB. The ROM dump is the one saved by
+`run_descriptor_experiment.py --start 0x1000 --words 161792`.
 
 The owner also has an iPod Classic. With it connected to the Mac in normal mode:
 

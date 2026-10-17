@@ -179,3 +179,99 @@ class MemoryWriteTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MemoryRangeValidationTests(unittest.TestCase):
+    def test_original_candidate_page_still_allowed(self):
+        self.assertEqual(
+            probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
+
+    def test_flash_mapped_region_allowed(self):
+        # Flash is mapped at 0x200000; the firmware/handlers are read here.
+        self.assertEqual(probe.validate_memory_range(0x00200000, 16), (0x00200000, 16))
+        self.assertEqual(probe.validate_memory_range(0x00205ca2 & ~3, 8), (0x00205ca0, 8))
+
+    def test_poke_address_must_be_in_an_allowed_page(self):
+        self.assertEqual(probe.validate_write_address(0x002103d8), 0x002103d8)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x00000000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x000a0000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x002103d9)
+
+    def test_context_ram_page_allowed(self):
+        # 0x210000 window holds the device context the descriptor handler reads.
+        self.assertEqual(
+            probe.validate_memory_range(0x002103a8, 160), (0x002103a8, 160))
+
+    def test_descriptor_table_page_allowed(self):
+        self.assertEqual(
+            probe.validate_memory_range(0x00288900, 192), (0x00288900, 192))
+
+    def test_handler_code_page_allowed(self):
+        # 0x205000 holds the descriptor handlers the callback vector points to.
+        self.assertEqual(
+            probe.validate_memory_range(0x00205c00, 128), (0x00205c00, 128))
+
+    def test_callback_vector_page_allowed(self):
+        # The 17-word vector at 0x285c14..0x285c54 (0x285c0c + 0x08..0x48).
+        self.assertEqual(
+            probe.validate_memory_range(0x00285c14, 17), (0x00285c14, 17))
+
+    def test_unaligned_start_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c15, 1)
+
+    def test_zero_or_too_many_words_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, 0)
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, probe.MAX_MEMORY_WORDS + 1)
+
+    def test_range_spanning_two_pages_rejected(self):
+        # A read may not straddle from one allowed page into another or the gap.
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00217ffc, 2)
+
+    def test_hang_addresses_remain_outside_every_page(self):
+        for bad in (0x000a0000, 0x0880a0a8):
+            with self.assertRaises(ValueError):
+                probe.validate_memory_range(bad, 1)
+
+
+class CustomMarkerPatchTests(unittest.TestCase):
+    def _patch(self):
+        return probe.build_custom_marker_patch(
+            probe.base64.b64decode(probe.STOCK_FIRMWARE_B64)[0x30:0x30 + 248])
+
+    def test_entry_is_hooked_to_appended_code(self):
+        import capstone
+        patch = self._patch()
+        md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+        first = next(md.disasm(patch[:2], 0))
+        self.assertEqual(first.mnemonic, "b")
+        self.assertEqual(first.op_str, "#0xa0")  # branch to injected stub at 0xa0
+
+    def test_appended_code_writes_marker_and_returns(self):
+        import capstone
+        patch = self._patch()
+        md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+        seq = [(i.mnemonic, i.op_str) for i in md.disasm(patch[0xa0:0xa0 + 16], 0xa0)]
+        self.assertEqual(seq[0], ("push", "{r0, r1}"))
+        self.assertEqual(seq[3], ("str", "r0, [r1]"))
+        self.assertEqual(seq[4], ("pop", "{r0, r1}"))
+        self.assertEqual(seq[5], ("push", "{r4, r5, r6, lr}"))  # displaced original prologue
+        self.assertEqual(seq[6], ("b", "#2"))                   # back into the patch body
+
+    def test_marker_value_and_address_present(self):
+        patch = self._patch()
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 16)[0], probe.CUSTOM_MARKER_VALUE)
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 20)[0], probe.CUSTOM_MARKER_ADDR)
+
+    def test_marker_address_is_in_an_allowed_read_page(self):
+        probe.validate_memory_range(probe.CUSTOM_MARKER_ADDR, 1)  # must not raise
+
+    def test_refuses_unexpected_patch_entry(self):
+        with self.assertRaises(RuntimeError):
+            probe.build_custom_marker_patch(b"\x00\x00" + b"\x00" * 246)
