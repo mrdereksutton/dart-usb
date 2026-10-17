@@ -74,7 +74,7 @@ them run (injected code doesn't execute) or persist (RAM is wiped at power-on),
 and we can't read the `0x100000..0x200000` firmware that would explain the apply
 mechanism.
 
-## 6. The chosen approach: direct SPI flash access
+## 6. Direct SPI flash access
 
 Read and write the dongle's flash chip directly, with a clip-on programmer, over
 the flash chip's own pins rather than through the RTL8761 controller.
@@ -97,10 +97,6 @@ the flash chip's own pins rather than through the RTL8761 controller.
   the backup back.
 - The parts cost about $5 and the read/write needs no cooperation from the
   RTL8761 firmware.
-
-(For reference, the other routes considered are the USB vendor commands — which
-cannot read the needed regions or persist a change — and the chip's UART
-programming pins, whose download mode and pinout are undocumented for this part.)
 
 ## 8. Scope beyond flash access
 
