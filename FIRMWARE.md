@@ -579,3 +579,27 @@ download-complete / patch-apply handler in the ROM dump to find (a) where the
 patch is loaded in RAM and (b) the point where the ROM transfers control into it.
 Hook there. The delivery path and the custom-patch builder are already in place;
 only the correct hook location is missing.
+
+### B1 final: entry-offset-0 code does not execute; need the patch-apply entry
+
+Repeated the marker test with the stub placed IN PLACE at offset 0xA0 (inside the
+248 bytes the controller loads, so no appended-region doubt). Result unchanged:
+the marker never appears at 0x00211F00, during download, after enumeration, or
+after subsequent reads, while the device stays patched (version 0x7bf15762).
+
+So, definitively: the RTL8761CU ROM does not execute the downloaded patch as code
+from offset 0. Hooking the entry does not run our code. The patch is almost
+certainly applied as an on-demand hook (its code replaces/extends a specific ROM
+function and runs only when that function is invoked during BT operation), or via
+a patch-apply routine that enters at a computed point, not offset 0.
+
+Where B1 stands:
+- Delivering a modified patch over fc20 works and is safe (no brick). (DONE)
+- Running our own code requires identifying the ROM's patch-apply mechanism:
+  which ROM function the patch hooks (so it can be triggered) or the exact entry
+  the ROM transfers control to. That is offline ROM reverse-engineering on the
+  existing dump (no dongle needed), guided by Dark Mentor's B-chip write-up of
+  the same mechanism. Until then, injected code cannot be shown to run.
+
+This is the open sub-problem for the dongle-native track. The shippable Track A
+(Raspberry Pi iPod-gadget + Bluetooth sink) does not depend on it.
