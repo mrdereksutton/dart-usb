@@ -23,6 +23,28 @@ is recorded as behavior of this macOS/device combination rather than assumed
 from the libusb API name. Source:
 https://github.com/libusb/libusb/blob/master/libusb/os/darwin_usb.c
 
+## Related public SDK reference
+
+Realtek publishes a related audio SDK at
+https://github.com/rtkconnectivity/RTL87x3E-Common-SDK . This continuation pins it
+to `ae842d07494ac53cf966e34684804baeed86676e` and checks out only selected headers
+and samples under `/private/tmp/bt600-rtk-common-sdk`.
+
+Useful files are `inc/usb/hal/hal_usb.h` (endpoint and isochronous request APIs),
+`inc/usb/composite/usb_composite_dev.h` (device/interface registration),
+`inc/usb/composite/usb_dev_driver.h` (descriptors and vendor callbacks),
+`src/sample/usb_demo/usb/audio/usb_audio1.c` / `usb_audio_stream.c`, and
+`inc/framework/bt/bt_a2dp.h` / `bt_avrcp.h`. The USB driver documents a default
+512-byte control-transfer buffer. The audio headers describe SBC/AAC and stream
+callbacks. These headers are for the related RTL87x3E family: compare their
+layouts and APIs with the live CU code before binding an entry point.
+No SDK source or prebuilt image has been copied into this repository or loaded.
+
+The new actual flash capture contains `imp_patch_upperstack_btif_handle_command`
+at `0x0208fb8b`, L2CAP/SDP patch names nearby, mSBC/PCM pipeline names around
+`0x020a5b70`, and codec driver names around `0x020c4650`. These give specific
+subsystems to inspect for reuse as the Bluetooth/audio work proceeds.
+
 ## Current corrections — 2026-10-17
 
 Read this section before the chronological research below.

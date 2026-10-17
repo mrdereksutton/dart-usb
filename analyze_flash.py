@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Summarize and sanity-check a direct SPI-flash dump of the dongle.
+"""Summarize bytes captured from the RTL8761CU's flash address region.
 
-For use with a flashrom read of the W25Q16 (see FLASH_ACCESS.md). The flash image
-is the chip's raw contents; the firmware is mapped for execution at 0x00200000,
-so pass --base 0x00200000 (the default) to put offsets into CPU address space.
+The live setup callback is at 0x020be8a0; the ROM driver classifies its flash
+region at 0x02000000. The older capture at 0x00200000 includes RAM. Use --base
+explicitly when analyzing that older file. A raw SPI image needs a separate
+mapping check; a CPU-memory capture is not automatically a physical-chip image.
 
 It reports size, how much is real (non-0xFF) content, whether the known firmware
 markers are present (the ">>> Platform Ext" string and the descriptor handler
@@ -11,7 +12,7 @@ bytes at 0x205ca2), interesting strings, and a sha256. It does NOT need a dongle
 Deep disassembly stays in rom_analyze.py:
 
     python3 analyze_flash.py flash.bin
-    python3 rom_analyze.py flash.bin --base 0x00200000
+    python3 rom_analyze.py flash.bin --base 0x02000000
 
 A second image can be passed with --compare to diff two dumps (e.g. before/after
 a write, or two reads to confirm a stable dump)."""
@@ -22,14 +23,16 @@ import re
 import struct
 from pathlib import Path
 
-FLASH_BASE = 0x00200000
-# Descriptor handler bytes read live from the controller at 0x205ca2 this session.
-HANDLER_ADDR = 0x00205CA2
-HANDLER_BYTES = bytes.fromhex("0fb43eb504 46bdf82410 0b9da1f50071".replace(" ", ""))
+FLASH_BASE = 0x02000000
+# Live setup callback captured 2026-10-17, result ...101448.581977Z.json.
+HANDLER_ADDR = 0x020BE8A0
+HANDLER_BYTES = bytes.fromhex("2d e9 f3 4f 85 b0 4f f0 00 09 05 98 88 46 4f f0")
 
 
 def summarize(path, base):
     data = Path(path).read_bytes()
+    if not data:
+        raise ValueError("The capture is empty")
     nonff = sum(1 for b in data if b != 0xFF)
     non00 = sum(1 for b in data if b != 0x00)
     print(f"file: {path}")
@@ -64,7 +67,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("image", help="flashrom dump of the W25Q16")
     p.add_argument("--base", type=lambda v: int(v, 0), default=FLASH_BASE,
-                   help="address the flash is mapped to (default 0x00200000)")
+                   help="CPU address of the capture start (default 0x02000000)")
     p.add_argument("--compare", help="a second dump to diff against image")
     args = p.parse_args(argv)
 
