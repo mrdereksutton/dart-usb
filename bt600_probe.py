@@ -246,6 +246,17 @@ def read_memory_word(command, address, quiet=False):
     return result[1:]
 
 
+def read_memory_block(command, address, length, quiet=True):
+    """fc61 read of `length` bytes at `address`. The fc61 access byte is a byte
+    count; the firmware returns that many data bytes after the status. Returns
+    the data bytes actually returned (may be fewer than requested)."""
+    result = command(MEMORY_READ_OPCODE, struct.pack("<BI", length, address), quiet=quiet)
+    if not result or result[0]:
+        status = f"0x{result[0]:02x}" if result else "empty response"
+        raise RuntimeError(f"Memory read at 0x{address:08x} returned {status}")
+    return result[1:]
+
+
 def write_memory_word(command, address, data, quiet=False):
     if len(data) != 4:
         raise RuntimeError("Memory write expects exactly four data bytes")
@@ -298,6 +309,9 @@ def main(argv=None):
     parser.add_argument("--poke", nargs=2, metavar=("ADDR", "VALUE"),
                         help="PERSISTENT write of one 32-bit VALUE at ADDR (no restore); ADDR must be aligned "
                              "and inside one allowed read page. Used for the write-and-reenumerate experiment.")
+    parser.add_argument("--dump-flash", metavar="OUTPUT",
+                        help="Read-only: back up the memory-mapped SPI flash (0x200000..0x400000) to OUTPUT "
+                             "via fc61 block reads, with a sha256 at the end.")
     parser.add_argument("--capture-usb-ram", metavar="OUTPUT",
                         help="Save live USB descriptors and a RAM dump under OUTPUT, then search descriptor structures")
     parser.add_argument("--capture-range", nargs=2, metavar=("START", "WORDS"),
@@ -620,6 +634,42 @@ def main(argv=None):
                 restored = read_memory_word(command, write_address, quiet=True)
                 print(f"  restored:  {restored.hex(' ')}  ->  "
                       f"{'ok' if restored == original else 'RESTORE FAILED, replug the dongle'}")
+        if args.dump_flash is not None:
+            if len(rom) < 2 or rom[0] != 0:
+                raise RuntimeError("No ROM version returned; no flash read")
+            flash_start, flash_end = 0x00200000, 0x00400000
+
+            def read_word_retry(addr, tries=6):
+                last = None
+                for attempt in range(tries):
+                    try:
+                        return read_memory_word(command, addr, quiet=True)
+                    except RuntimeError as err:
+                        last = err
+                        time.sleep(0.02 * (attempt + 1))
+                raise RuntimeError(f"read at 0x{addr:08x} failed after {tries} tries: {last}")
+
+            # fc61 returns one 32-bit word per command (the 0x20 access byte is a
+            # fixed width qualifier, not a length). So the dump is word-by-word.
+            print(f"Dumping flash 0x{flash_start:08x}..0x{flash_end:08x} word-by-word "
+                  f"to {args.dump_flash}", flush=True)
+            import hashlib as _h
+            digest = _h.sha256()
+            t0 = time.monotonic()
+            with open(args.dump_flash, "wb") as out:
+                address = flash_start
+                while address < flash_end:
+                    data = read_word_retry(address)
+                    out.write(data)
+                    digest.update(data)
+                    address += 4
+                    done = address - flash_start
+                    if done % 0x10000 == 0:
+                        rate = done / max(1e-6, time.monotonic() - t0)
+                        eta = (flash_end - address) / max(1.0, rate)
+                        print(f"  ...0x{address:08x} ({done // 1024} KiB, {rate / 1024:.1f} KiB/s, "
+                              f"ETA {eta / 60:.1f} min)", flush=True)
+            print(f"Flash backup complete: {flash_end - flash_start} bytes, sha256 {digest.hexdigest()}")
         if args.poke is not None:
             if len(rom) < 2 or rom[0] != 0 or maker != 0x005D:
                 raise RuntimeError("Controller does not match this experiment; no write attempted")
