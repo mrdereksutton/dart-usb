@@ -186,6 +186,11 @@ class MemoryRangeValidationTests(unittest.TestCase):
         self.assertEqual(
             probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
 
+    def test_handler_code_page_allowed(self):
+        # 0x205000 holds the descriptor handlers the callback vector points to.
+        self.assertEqual(
+            probe.validate_memory_range(0x00205c00, 128), (0x00205c00, 128))
+
     def test_callback_vector_page_allowed(self):
         # The 17-word vector at 0x285c14..0x285c54 (0x285c0c + 0x08..0x48).
         self.assertEqual(

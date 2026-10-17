@@ -229,3 +229,42 @@ The current `--read-range` reader is whitelisted to `0x00217000..0x00217fff`;
 widen it to `0x00285000..0x00286000` for this read, a few aligned words at a time,
 stopping on the first failed read (as the existing reader does). Do not read
 `0x000a0000` or `0x0880a0a8`; those hang the controller.
+
+### Hardware read of the callback vector, 2026-10-17
+
+Ran `python3 bt600_probe.py --read-range 0x285c14 17` on the connected dongle
+(read-only; no firmware load, no write). The `0x285c0c` vector, idle stock state:
+
+    +0x20 (0x285c2c) = 0x00205c2b   handler, Thumb entry 0x00205c2a
+    +0x38 (0x285c44) = 0x00205ca3   descriptor handler, Thumb entry 0x00205ca2
+    +0x48 (0x285c54) = 0x00000000   primary descriptor slot, null while idle
+
+The handlers live at `0x0020xxxx`, a code bank above the `0x1000..0x9f000` ROM
+dump. That bank is `fc61`-readable: `--read-range 0x205c00 128` returned it.
+
+### The descriptor handler at 0x205ca2 (read from hardware, disassembled offline)
+
+`0x00205ca2` is the USB descriptor / device-state message handler reached through
+vector slot `+0x38`. It:
+
+- reads a 16-bit message code from the control block (`[sp,#0x24]`) and dispatches
+  sub-messages in the `0x2xx` namespace (e.g. `0x276`, `0x5a`, `0x209`+offsets);
+- indexes the **same device-context array as the ROM code**: `ldr r1,[0x285254];
+  ldr r1,[r1]; r2 = r1 + devindex*0x440` (the `0x205c3e` sibling shows it plainly),
+  confirming the `0x20xxxx` bank and the low ROM are one firmware image sharing
+  one USB context;
+- reads its descriptor state from a set of `0x28xxxx` RAM structures, resolved
+  from its literal pool: `0x00288950`, `0x0028598c`, `0x00285da4`, `0x00281aac`.
+
+So the descriptor bytes are assembled at run time by this handler from those RAM
+structures, keyed by the per-device context. There is no static descriptor blob
+to patch. The practical, reversible way to change what the dongle enumerates as
+is to change those RAM structures (RAM word write/readback/restore at
+`0x00210000` already works) or the state the handler reads, then re-enumerate on
+the Mac and read the descriptors back. `0x00288950` is the largest of the
+referenced structures and is the next read: it is the descriptor/config store the
+handler indexes.
+
+This answers the standing question: the EP0 GET_DESCRIPTOR path is
+ROM `0x3c14c` -> message id -> vector `0x285c0c+0x38` -> handler `0x205ca2` ->
+RAM structures `0x288950` / `0x28598c` / `0x285da4` / `0x281aac`.
