@@ -268,3 +268,26 @@ handler indexes.
 This answers the standing question: the EP0 GET_DESCRIPTOR path is
 ROM `0x3c14c` -> message id -> vector `0x285c0c+0x38` -> handler `0x205ca2` ->
 RAM structures `0x288950` / `0x28598c` / `0x285da4` / `0x281aac`.
+
+### The descriptor store is a handler table, not bytes (end of the offline/read trail)
+
+Read `0x00288900..0x00288c00`. `0x00288950` holds `0x00203f45` (Thumb entry
+`0x203f44`), and the whole window is a table of `0x0020xxxx` code pointers. So
+`0x288950` is another dispatch table of per-message handlers, not a descriptor
+byte buffer. Chasing it leads to one more layer of the same message framework.
+
+Conclusion, with the mechanism now mapped end to end: this is Realtek's layered
+USB-device message stack. The device and configuration descriptors have no static
+blob anywhere readable; they are serialized field by field at enumeration by a
+chain of small handlers (ROM `0x3c14c` -> vector `0x285c0c+0x38` -> `0x205ca2` ->
+handler table `0x288950` -> ...), driven by per-device RAM state. That is the
+full answer to where the descriptors come from.
+
+For the audio goal this fixes the approach: do not look for a descriptor table to
+edit. To change what the dongle enumerates as (toward a UAC1 48 kHz stereo
+streaming endpoint), change the RAM state these handlers read, or install a
+handler, using the reversible word write at `0x00210000` that already works, and
+confirm by re-enumerating on the Mac and reading the descriptors back with
+`descriptor_capture.py`. Identifying the specific RAM state bytes that set the
+interface/endpoint shape is the next concrete sub-task, approached by writing a
+candidate word and observing the re-enumerated descriptor, not by more reading.

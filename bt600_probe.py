@@ -51,6 +51,7 @@ MEMORY_READ_PAGES = (
     (0x00205000, 0x00206000),
     (0x00217000, 0x00218000),
     (0x00285000, 0x00286000),
+    (0x00288000, 0x00289000),
 )
 MAX_MEMORY_WORDS = 256
 # idVendor/idProduct bytes as they appear inside a USB device descriptor
