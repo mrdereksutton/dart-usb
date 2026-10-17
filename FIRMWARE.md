@@ -316,3 +316,28 @@ change requires the host to re-enumerate, i.e. a physical unplug/replug, then
 `descriptor_capture.py`. That persistent write + replug is the next step and is
 done at the keyboard, since a wrong persistent value can wedge enumeration until
 replug. The reversible write-test above leaves nothing changed.
+
+### RAM writes do not survive a replug, 2026-10-17 (decisive for method)
+
+Persistence probe: poked 0xdeadbeef into context scratch word 0x002103d8 with
+`--poke` (left in place), the user unplugged and replugged the dongle, then
+`--read-range 0x2103d8 1` returned 00000000. A replug power-cycles the controller
+and clears RAM.
+
+Consequences, and they reshape the project:
+
+- The "write RAM, replug to re-enumerate" loop cannot work: the replug erases the
+  write before enumeration. To observe a RAM poke's effect, re-enumeration must
+  happen WITHOUT power loss (a logical USB bus reset, libusb_reset_device, which
+  keeps firmware RAM) -- a bench-only technique.
+- More importantly for the actual goal: the car power-cycles the dongle on every
+  start. So a RAM change, and equally a host-downloaded fc20 patch (a car will
+  never send Realtek vendor patches), cannot change what the dongle presents to
+  the car. Both are bench instruments only.
+- A change that works in the car must survive power-cycle and be loaded by the
+  dongle itself at boot: it has to live in flash. The flash-write path is the
+  real blocker (see "Persistence lead") and is now the critical sub-task.
+
+Bench reverse-engineering can still use a logical-reset loop to learn how the
+0x205ca2 handler builds descriptors from RAM, but that knowledge only reaches the
+car once it can be written to flash.
