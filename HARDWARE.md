@@ -58,10 +58,20 @@ This gives an actual C-chip memory-read response at `0x00217e88`; the zero-fille
 
 The original local transcript is `results/bt600-20261016T052909.255079Z.txt`; results files are excluded from Git.
 
+## Capability map collected 2026-10-16
+
+| Capability | Opcode | Result |
+| --- | --- | --- |
+| Local version / ROM version | `0x1001` / `0xfc6d` | Works; ROM version 1 |
+| Memory read | `0xfc61` | Works over `0x00001000..0x0009f000` and RAM near `0x0021xxxx`; `0x0` reads zero; `0x000a0000` and `0x0880a0a8` hang the controller |
+| Firmware download | `0xfc20` | Accepted; the controller relaunches (running version `0x000e8761` -> `0x7bf15762`); the patch is relocated on load (its prologue is not in any readable region) |
+| Memory write | `0xfc62` | **Works.** Read/flip/verify/restore at `0x00210000`: `00 00 00 00` -> wrote `ff ff ff ff`, read back `ff ff ff ff`, restored `00 00 00 00` |
+
+So the controller exposes full RAM read and write plus a launching firmware-download path. The `0b05:1d70` USB identity is not in any readable region (searched in all byte orders), so it is config/efuse the read path cannot reach; but the firmware stages the descriptor in RAM at enumeration, which write access can reach in principle.
+
 ## Results still to collect
 
-- Version response after stock-patch upload.
-- RAM contents after the stock upload and bounded RAM mapping.
-- ROM/flash map, patch load address, and descriptor handling.
+- Where the firmware stages the USB device descriptor in RAM at enumeration (the write target for changing what the dongle presents as).
+- How the controller relocates a downloaded patch, and the real load base.
 - Which changes survive USB reconfiguration and complete power loss.
 - The car's supported USB/iPod protocol details needed for a working bridge.

@@ -78,13 +78,16 @@ class HCIResponseTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(RuntimeError):
                 probe.command_result(event, 0xFC6D)
 
-    def test_stock_upload_must_change_to_expected_version(self):
-        before = bytes.fromhex("00 0e 0e 00 0e 5d 00 61 87")
-        after = struct.pack("<BBHBHH", 0, 0x0E, 0x4618, 0x0E, 0x005D, 0xD3F3)
+    def test_stock_upload_requires_the_running_version_to_change(self):
+        # btrtl only logs the post-download version, so success is a change
+        # from the pre-download value, not a match to the container version.
+        before = 0x000E8761
+        unchanged = bytes.fromhex("00 0e 0e 00 0e 5d 00 61 87")  # still 0x000e8761
+        changed = struct.pack("<BBHBHH", 0, 0x0E, 0x7BF1, 0x0E, 0x005D, 0x5762)  # 0x7bf15762
         with patch("builtins.print"):
-            with self.assertRaisesRegex(RuntimeError, "expected stock patch is not running"):
-                probe.require_stock_version(before, 0x4618D3F3)
-            probe.require_stock_version(after, 0x4618D3F3)
+            with self.assertRaisesRegex(RuntimeError, "did not change"):
+                probe.require_stock_version(unchanged, before)
+            probe.require_stock_version(changed, before)  # observed on hardware; no raise
 
     def test_acknowledgement_must_match_the_fragment(self):
         probe.require_download_ack(b"\x00\x00", 0)
@@ -123,5 +126,152 @@ class ReadRangeTests(unittest.TestCase):
             self.assertIn("Memory 0x00217e88: b4 88 3b c2", output.getvalue())
 
 
+class DescriptorScanTests(unittest.TestCase):
+    def test_signature_is_the_little_endian_vid_pid(self):
+        self.assertEqual(probe.USB_VID_PID_SIGNATURE, bytes.fromhex("050b701d"))
+
+    def test_find_locates_the_descriptor_signature_in_a_blob(self):
+        blob = b"\x00" * 20 + bytes.fromhex("12 01 00 02 e0 01 01 40") + probe.USB_VID_PID_SIGNATURE
+        hit = probe.find_patch_base(blob, 0x00210000, probe.USB_VID_PID_SIGNATURE)
+        self.assertEqual(hit, 0x00210000 + 28)
+
+    def test_absent_signature_returns_none(self):
+        self.assertIsNone(probe.find_patch_base(b"\x11" * 64, 0x00210000, probe.USB_VID_PID_SIGNATURE))
+
+    def test_byte_order_variants_cover_both_endiannesses(self):
+        variants = set(probe.USB_SIGNATURE_VARIANTS)
+        self.assertIn(bytes.fromhex("050b701d"), variants)
+        self.assertIn(bytes.fromhex("1d700b05"), variants)
+        # A reversed-word layout is located by one of the variants.
+        blob = b"\x00" * 12 + bytes.fromhex("1d700b05")
+        self.assertTrue(any(probe.find_patch_base(blob, 0x1000, v) is not None
+                            for v in probe.USB_SIGNATURE_VARIANTS))
+
+
+class MapMemoryTests(unittest.TestCase):
+    def test_coalesce_runs_merges_consecutive_kinds(self):
+        samples = [(0x0, "zero"), (0x1000, "zero"), (0x2000, "data"),
+                   (0x3000, "data"), (0x4000, "zero")]
+        self.assertEqual(
+            probe.coalesce_runs(samples),
+            [(0x0, 0x1000, "zero"), (0x2000, 0x3000, "data"), (0x4000, 0x4000, "zero")],
+        )
+
+    def test_coalesce_runs_empty(self):
+        self.assertEqual(probe.coalesce_runs([]), [])
+
+
+class MemoryWriteTests(unittest.TestCase):
+    def test_write_frames_opcode_access_address_and_data(self):
+        sent = []
+        probe.write_memory_word(lambda op, params=b"", quiet=False: sent.append((op, params)) or b"\x00",
+                                0x00210000, b"\xde\xad\xbe\xef")
+        self.assertEqual(sent[0][0], probe.MEMORY_WRITE_OPCODE)
+        self.assertEqual(sent[0][1],
+                         struct.pack("<BI", probe.MEMORY_READ_ACCESS, 0x00210000) + b"\xde\xad\xbe\xef")
+
+    def test_write_rejects_bad_length_and_error_status(self):
+        with self.assertRaises(RuntimeError):
+            probe.write_memory_word(lambda *a, **k: b"\x00", 0, b"\x01\x02")
+        with self.assertRaisesRegex(RuntimeError, "0x01"):
+            probe.write_memory_word(lambda *a, **k: b"\x01", 0, b"\x01\x02\x03\x04")
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class MemoryRangeValidationTests(unittest.TestCase):
+    def test_original_candidate_page_still_allowed(self):
+        self.assertEqual(
+            probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
+
+    def test_flash_mapped_region_allowed(self):
+        # Flash is mapped at 0x200000; the firmware/handlers are read here.
+        self.assertEqual(probe.validate_memory_range(0x00200000, 16), (0x00200000, 16))
+        self.assertEqual(probe.validate_memory_range(0x00205ca2 & ~3, 8), (0x00205ca0, 8))
+
+    def test_poke_address_must_be_in_an_allowed_page(self):
+        self.assertEqual(probe.validate_write_address(0x002103d8), 0x002103d8)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x00000000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x000a0000)
+        with self.assertRaises(ValueError):
+            probe.validate_write_address(0x002103d9)
+
+    def test_context_ram_page_allowed(self):
+        # 0x210000 window holds the device context the descriptor handler reads.
+        self.assertEqual(
+            probe.validate_memory_range(0x002103a8, 160), (0x002103a8, 160))
+
+    def test_descriptor_table_page_allowed(self):
+        self.assertEqual(
+            probe.validate_memory_range(0x00288900, 192), (0x00288900, 192))
+
+    def test_handler_code_page_allowed(self):
+        # 0x205000 holds the descriptor handlers the callback vector points to.
+        self.assertEqual(
+            probe.validate_memory_range(0x00205c00, 128), (0x00205c00, 128))
+
+    def test_callback_vector_page_allowed(self):
+        # The 17-word vector at 0x285c14..0x285c54 (0x285c0c + 0x08..0x48).
+        self.assertEqual(
+            probe.validate_memory_range(0x00285c14, 17), (0x00285c14, 17))
+
+    def test_unaligned_start_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c15, 1)
+
+    def test_zero_or_too_many_words_rejected(self):
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, 0)
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00285c14, probe.MAX_MEMORY_WORDS + 1)
+
+    def test_range_spanning_two_pages_rejected(self):
+        # A read may not straddle from one allowed page into another or the gap.
+        with self.assertRaises(ValueError):
+            probe.validate_memory_range(0x00217ffc, 2)
+
+    def test_hang_addresses_remain_outside_every_page(self):
+        for bad in (0x000a0000, 0x0880a0a8):
+            with self.assertRaises(ValueError):
+                probe.validate_memory_range(bad, 1)
+
+
+class CustomMarkerPatchTests(unittest.TestCase):
+    def _patch(self):
+        return probe.build_custom_marker_patch(
+            probe.base64.b64decode(probe.STOCK_FIRMWARE_B64)[0x30:0x30 + 248])
+
+    def test_entry_is_hooked_to_appended_code(self):
+        import capstone
+        patch = self._patch()
+        md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+        first = next(md.disasm(patch[:2], 0))
+        self.assertEqual(first.mnemonic, "b")
+        self.assertEqual(first.op_str, "#0xa0")  # branch to injected stub at 0xa0
+
+    def test_appended_code_writes_marker_and_returns(self):
+        import capstone
+        patch = self._patch()
+        md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+        seq = [(i.mnemonic, i.op_str) for i in md.disasm(patch[0xa0:0xa0 + 16], 0xa0)]
+        self.assertEqual(seq[0], ("push", "{r0, r1}"))
+        self.assertEqual(seq[3], ("str", "r0, [r1]"))
+        self.assertEqual(seq[4], ("pop", "{r0, r1}"))
+        self.assertEqual(seq[5], ("push", "{r4, r5, r6, lr}"))  # displaced original prologue
+        self.assertEqual(seq[6], ("b", "#2"))                   # back into the patch body
+
+    def test_marker_value_and_address_present(self):
+        patch = self._patch()
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 16)[0], probe.CUSTOM_MARKER_VALUE)
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 20)[0], probe.CUSTOM_MARKER_ADDR)
+
+    def test_marker_address_is_in_an_allowed_read_page(self):
+        probe.validate_memory_range(probe.CUSTOM_MARKER_ADDR, 1)  # must not raise
+
+    def test_refuses_unexpected_patch_entry(self):
+        with self.assertRaises(RuntimeError):
+            probe.build_custom_marker_patch(b"\x00\x00" + b"\x00" * 246)

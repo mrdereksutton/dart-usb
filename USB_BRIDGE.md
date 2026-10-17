@@ -33,6 +33,12 @@ An Apple VID/PID change by itself implements none of those behaviors. The iAP-ov
 
 ## Additional reference, same data path
 
+[IPOD_PROTOCOL.md](IPOD_PROTOCOL.md) maps a pinned version of RockPod's iPod
+Classic USB digital-audio implementation. It adds a concrete embedded reference
+for the audio/HID configuration, IDPS startup, full-speed report fragmentation,
+Digital Audio lingo, and track metadata/playback commands. The physical iPod is
+not required to continue this source analysis.
+
 [`twinn1013/bt2iap`](https://github.com/twinn1013/bt2iap) connects a Linux A2DP receiver to the above iPod gadget implementation. It is useful for studying the audio routing and head-unit diagnostics. It runs on a Raspberry Pi; it does not supply RTL8761C firmware. No additional hardware is being selected or purchased as part of this project.
 
 ## Next controller evidence
