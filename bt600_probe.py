@@ -696,15 +696,18 @@ def main(argv=None):
                     try:
                         data = read_word_retry(address, tries=3)
                     except RuntimeError as err:
-                        # A few flash words reliably fault and drop the device off
-                        # USB (e.g. 0x225000). Mark the word, record it, and stop so
-                        # a rerun (fresh enumeration) resumes past it.
-                        out.write(b"\xff\xff\xff\xff")
+                        # Faulting addresses (unmapped holes, e.g. 0x225000) drop
+                        # the device off USB. Skip the REST of this 4 KiB page with
+                        # a gap marker so a large hole costs one rerun per page, not
+                        # per word, then stop so a fresh enumeration resumes.
+                        page_end = (address & ~0xFFF) + 0x1000
+                        fill = page_end - address
+                        out.write(b"\xff" * fill)
                         out.flush()
                         with open(gaps_path, "a") as g:
-                            g.write(f"0x{address:08x} {err}\n")
-                        print(f"  gap at 0x{address:08x}: {err}; marked ffffffff, rerun resumes "
-                              f"at 0x{address + 4:08x}", flush=True)
+                            g.write(f"0x{address:08x}..0x{page_end:08x} {err}\n")
+                        print(f"  gap 0x{address:08x}..0x{page_end:08x} ({fill} B): {err}; "
+                              f"rerun resumes at 0x{page_end:08x}", flush=True)
                         break
                     out.write(data)
                     digest.update(data)
