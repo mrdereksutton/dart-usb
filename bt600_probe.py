@@ -113,6 +113,65 @@ def stock_payload(rom_version):
     raise RuntimeError(f"No stock patch for ROM version {rom_version}")
 
 
+CUSTOM_MARKER_ADDR = 0x00211F00  # RAM, inside the known 0x210000 window, past the
+CUSTOM_MARKER_VALUE = 0xDEADBEEF  # device context at 0x2103a8 so it is not reused.
+
+
+def build_custom_marker_patch(code, marker_addr=CUSTOM_MARKER_ADDR,
+                              marker_value=CUSTOM_MARKER_VALUE):
+    """Insert an entry hook into the stock patch code that runs appended Thumb
+    code at launch: it writes marker_value to marker_addr, performs the patch's
+    displaced first instruction, then returns into the patch. Proves custom code
+    runs on the controller. All intra-patch branches are PC-relative (no load
+    address needed); only the marker address is absolute. Returns the larger
+    patch bytes. Verified by disassembly in test_probe.py."""
+    code = bytearray(code)
+    entry = bytes(code[0:2])
+    if entry != b"\x70\xb5":            # push {r4, r5, r6, lr}
+        raise RuntimeError("Unexpected patch entry; refusing to build custom patch")
+    base = len(code)
+    if base % 4:
+        raise RuntimeError("Patch code length must be four-byte aligned")
+
+    def branch(frm, to):                # Thumb T2 unconditional branch (b.n)
+        return struct.pack("<H", 0xE000 | (((to - (frm + 4)) >> 1) & 0x7FF))
+
+    code[0:2] = branch(0, base)         # hook: entry -> appended code
+    extra = bytearray()
+    extra += b"\x03\xb4"                # push {r0, r1}
+    extra += b"\x00\x48"                # ldr r0, [pc, #v]   (fixed up below)
+    extra += b"\x00\x49"                # ldr r1, [pc, #a]
+    extra += b"\x08\x60"                # str r0, [r1]
+    extra += b"\x03\xbc"                # pop {r0, r1}
+    extra += entry                      # push {r4, r5, r6, lr}  (displaced original)
+    extra += branch(base + 12, 2)       # b back to patch+2
+    extra += b"\x00\xbf"                # nop (align data to 4)
+    val_off = len(extra); extra += struct.pack("<I", marker_value)
+    addr_off = len(extra); extra += struct.pack("<I", marker_addr)
+
+    def ldr_literal(at, rt, target):
+        pc = (base + at + 4) & ~3
+        imm8 = (base + target - pc) // 4
+        if not 0 <= imm8 < 256:
+            raise RuntimeError("ldr literal out of range")
+        return struct.pack("<H", 0x4800 | (rt << 8) | imm8)
+
+    extra[2:4] = ldr_literal(2, 0, val_off)
+    extra[4:6] = ldr_literal(4, 1, addr_off)
+    return bytes(code) + bytes(extra)
+
+
+def custom_marker_payload(rom_version, marker_addr=CUSTOM_MARKER_ADDR,
+                          marker_value=CUSTOM_MARKER_VALUE):
+    """Like stock_payload, but the patch code carries the marker-write hook."""
+    version, chip_id, payload = stock_payload(rom_version)
+    firmware = base64.b64decode(STOCK_FIRMWARE_B64, validate=True)
+    config = base64.b64decode(STOCK_CONFIG_B64, validate=True)
+    code = payload[:len(payload) - len(config) - 4]   # strip appended version+config
+    custom = build_custom_marker_patch(code, marker_addr, marker_value)
+    return version, chip_id, custom + struct.pack("<I", version) + config
+
+
 def download_fragments(payload):
     # Mirrors Linux's extra final fragment when length is a multiple of 252.
     count = len(payload) // 252 + 1
@@ -299,6 +358,9 @@ def coalesce_runs(samples):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--load-stock", action="store_true", help="Upload the matching stock RTL8761CU driver patch")
+    parser.add_argument("--load-custom", action="store_true",
+                        help="Upload the stock patch with an added marker-write hook (proves custom code runs); "
+                             "RAM-only, reverted by a replug")
     parser.add_argument("--probe-memory", action="store_true", help="Read four bytes at the RAM-table address that answered on this dongle")
     parser.add_argument("--read-range", nargs=2, metavar=("START", "WORDS"),
                         help="Read 1..256 four-byte words within one allowed RAM page (0x00217000..0x00217fff or 0x00285000..0x00285fff)")
@@ -326,7 +388,7 @@ def main(argv=None):
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args(argv)
     if args.capture_usb_ram:
-        if (args.load_stock or args.probe_memory or args.read_range or args.map_memory
+        if (args.load_stock or args.load_custom or args.probe_memory or args.read_range or args.map_memory
                 or args.find_descriptor is not None or args.find_patch
                 or args.write_test is not None or args.inspect_stock):
             parser.error("--capture-usb-ram runs alone; use a separate command for other probe modes")
@@ -536,6 +598,34 @@ def main(argv=None):
                 after = command(0x1001)
                 require_stock_version(after, current_version)
                 print("Patch launched: the running firmware version changed after download.")
+            keep_configuration = True
+        if args.load_custom:
+            if len(rom) < 2 or rom[0] != 0:
+                raise RuntimeError("No ROM version returned; no firmware was sent")
+            if maker != 0x005D or hci_version != 0x0E:
+                raise RuntimeError("The controller does not match this RTL8761C experiment")
+            if (hci_revision, lmp_subversion) != (0x000E, 0x8761):
+                raise RuntimeError("Controller has another patch loaded. Unplug/replug it, then rerun.")
+            marker_addr, marker_value = CUSTOM_MARKER_ADDR, CUSTOM_MARKER_VALUE
+            expected_version, chip_id, payload = custom_marker_payload(rom[1], marker_addr, marker_value)
+            current_version = (hci_revision << 16) | lmp_subversion
+            print(f"Uploading CUSTOM patch (stock + marker hook): chip ID {chip_id}, {len(payload)} bytes. "
+                  f"It writes 0x{marker_value:08x} to 0x{marker_addr:08x} at launch. "
+                  "RAM-only; a replug fully reverts it.", flush=True)
+            for fragment in download_fragments(payload):
+                response = command(0xFC20, fragment)
+                require_download_ack(response, fragment[0])
+            after = command(0x1001)
+            require_stock_version(after, current_version)
+            print("Custom patch launched: the running firmware version changed after download.")
+            data = read_memory_word(command, marker_addr, quiet=True)
+            got = struct.unpack("<I", data)[0]
+            if got == marker_value:
+                print(f"  MARKER VERIFIED: read 0x{got:08x} at 0x{marker_addr:08x} -> "
+                      "our custom code executed on the controller.")
+            else:
+                print(f"  marker not found: read 0x{got:08x} (expected 0x{marker_value:08x}). "
+                      "The custom code may not have run, or that RAM was reused after launch.")
             keep_configuration = True
         if args.map_memory:
             map_start, map_end, map_step = 0x00000000, 0x00400000, 0x1000
