@@ -603,3 +603,25 @@ Where B1 stands:
 
 This is the open sub-problem for the dongle-native track. The shippable Track A
 (Raspberry Pi iPod-gadget + Bluetooth sink) does not depend on it.
+
+### B1 drilldown: the patch is not in fc61-readable RAM, 2026-10-17
+
+Guided by Dark Mentor's writer, which hooks a function epilog DEEP inside a large
+patch loaded at a known base (0x8010a000 on the B chip), not offset 0:
+
+- The CU patch is only 252 bytes yet its code makes PC-relative calls to base+0x220,
+  +0x22a, ... (nine stubs 0xA apart) which lie BEYOND its own 252 bytes. So it is
+  meant to load at a fixed base where that surrounding code is resident, not as a
+  standalone blob at an arbitrary address.
+- With a custom patch resident (version 0x7bf15762), scanning every fc61-readable
+  bank (0x210000-0x21ffff, 0x280000-0x288fff, etc.) for the marker 0xDEADBEEF, the
+  entry hook bytes, and the stock prologue 70 b5 4c 1f found NONE of them.
+
+So the ROM loads the downloaded patch into a dedicated patch-RAM that fc61 cannot
+read (analogous to the B chip's separate patch region) and/or transforms it on
+apply. That is why hooking offset 0 does nothing and why the raw bytes are not
+visible. Two consequences: (1) finding the real entry requires reversing the ROM's
+fc20 download/apply handler to learn the patch-RAM base and the control-transfer
+point; (2) even then, verifying via memory reads may be limited because the patch-
+RAM is not fc61-readable. This is a multi-step ROM-RE effort with a real risk that
+the patch-RAM is not observable with the current read primitive.
