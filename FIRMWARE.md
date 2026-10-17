@@ -625,3 +625,27 @@ fc20 download/apply handler to learn the patch-RAM base and the control-transfer
 point; (2) even then, verifying via memory reads may be limited because the patch-
 RAM is not fc61-readable. This is a multi-step ROM-RE effort with a real risk that
 the patch-RAM is not observable with the current read primitive.
+
+### B1 wall: the patch-apply code and patch-RAM are not fc61-readable, 2026-10-17
+
+The ROM references 216+ distinct pointers into 0x00100000..0x00200000 (code it
+calls), and the 252-byte patch's own calls to base+0x220.. land there. But fc61
+cannot read that region: reads at 0x100000, 0x10f800, 0x140000, 0x17f360,
+0x1f0000, 0x1ff000 all fault. fc61 only reaches 0x1000..0x9f000 (ROM) and the
+0x21xxxx / 0x28xxxx RAM; 0x0 reads zero; 0xa0000 and 0x0880a0a8 hang.
+
+So both things needed to make injected code run are outside the one working read
+primitive:
+- the ROM's fc20 download/apply handler and the surrounding firmware live in the
+  unreadable 0x100000..0x200000 code bank, so the apply mechanism and the real
+  patch entry cannot be traced from the readable dump; and
+- the applied patch is not present in any fc61-readable RAM, so even a correct
+  hook cannot be verified by reading it back.
+
+Net for the dongle-native track: delivery of a modified patch works and is safe,
+but running our own code is blocked by the read primitive. Progress requires
+either a new read path that reaches 0x100000..0x200000 and the patch-RAM (itself
+an open RE problem on this chip), or a different approach. The sibling-chip (B)
+work succeeded partly because its patch-RAM (0x80xxxxxx) was readable; the CU's
+equivalent regions are not, with the tools found so far. The shippable Track A
+(Raspberry Pi iPod-gadget + Bluetooth A2DP sink) does not depend on any of this.
