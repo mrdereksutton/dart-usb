@@ -1,3 +1,48 @@
+# Session notes — 2026-10-17
+
+## Where we are
+
+The low-level controller work is done. Reading memory works across ROM
+`0x00001000..0x0009efff` and RAM `0x00210000..0x0021ffff`; a word write at
+`0x00210000` reads back and restores; loading the stock firmware runs and the
+reported version changes from `0x000e8761` to `0x7bf15762`. Leave `0x0880a0a8`
+and `0x000a0000` alone — they hang the controller.
+
+## This session
+
+- The USB descriptors are not stored as a contiguous block anywhere readable.
+  A full `0x1000..0x9efff` read (647168 bytes) searched in four word layouts
+  matched nothing. The firmware builds them in code.
+- Added `rom_analyze.py`: reads a saved ROM image offline (no dongle) and finds
+  the descriptor-building code by its constants — where the firmware loads VID
+  `0x0b05` / PID `0x1d70` and the descriptor length+type signatures (`0x0112`
+  device, `0x0209` config), as `MOVW` immediates or PC-relative literal loads,
+  plus the `cmp #6` that marks the GET_DESCRIPTOR request check. Smoke-tested
+  across all paths; `python3 -m unittest` is green (41 tests).
+- Reworded `CLAUDE.md` into plain project language; no technical facts changed.
+
+Pushed to draft PR #3, branch `claude/epic-gauss-dutrk1`.
+
+## Exact next step (on the Mac, offline)
+
+```
+pip3 install capstone
+python3 rom_analyze.py results/descriptor-20261017T002154.077318Z
+```
+
+The literal-load hits land inside the function that builds the device
+descriptor. Walk back to that function's entry, then find the caller reached
+from the `cmp #6` request check — that is the EP0 GET_DESCRIPTOR handler.
+From there, see how the descriptor is staged and whether the isochronous IN
+endpoint can be moved from 63 to 192 bytes per millisecond for 48 kHz stereo.
+
+## Still open, not blocking
+
+iPod Classic capture (`capture_ipod.py`) waits on finding the iPod. The
+car-facing UAC1/iAP behavior comes after the descriptor handler is mapped.
+
+---
+
 # Session notes — 2026-10-16
 
 ## Prepared continuation: descriptor/RAM capture and iPod Classic reference
