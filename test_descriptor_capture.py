@@ -52,6 +52,17 @@ class CaptureTests(unittest.TestCase):
                 self.assertEqual((root / "ram.bin").read_bytes(), b"\x11\x22\x33\x44")
                 self.assertEqual((root / "device.bin").read_bytes(), DEVICE)
 
+    def test_validate_range_accepts_both_readable_blocks_and_rejects_fault_addresses(self):
+        rom_words = (capture.ROM_END - capture.ROM_START) // 4  # the full 0x1000..0x9efff block
+        self.assertEqual(capture.validate_range(capture.ROM_START, rom_words), (capture.ROM_START, rom_words))
+        self.assertEqual(capture.validate_range(capture.RAM_START, 16384), (capture.RAM_START, 16384))
+        # 0x000a0000 and 0x0880a0a8 hang the controller; 0x0 is below the block;
+        # the last two straddle a block end or are unaligned.
+        for start, words in ((0xA0000, 1), (0x0880A0A8, 1), (0x0, 1),
+                             (capture.ROM_END - 4, 2), (capture.RAM_START + 1, 1), (capture.RAM_END - 4, 2)):
+            with self.subTest(start=start), self.assertRaises(ValueError):
+                capture.validate_range(start, words)
+
     def test_invalid_window_or_malformed_descriptor_never_starts_ram_reads(self):
         reader, descriptor = Mock(), Mock()
         with tempfile.TemporaryDirectory() as directory:

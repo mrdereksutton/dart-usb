@@ -271,7 +271,7 @@ def main(argv=None):
     parser.add_argument("--capture-usb-ram", metavar="OUTPUT",
                         help="Save live USB descriptors and a RAM dump under OUTPUT, then search descriptor structures")
     parser.add_argument("--capture-range", nargs=2, metavar=("START", "WORDS"),
-                        help="Optional subset of 0x00210000..0x0021ffff for --capture-usb-ram")
+                        help="Optional range for --capture-usb-ram, within 0x00001000..0x0009efff or 0x00210000..0x0021ffff")
     parser.add_argument("--inspect-stock", action="store_true", help="Inspect the ROM-1 stock payload without opening USB")
     args = parser.parse_args(argv)
     if args.capture_usb_ram:

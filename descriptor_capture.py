@@ -10,6 +10,11 @@ import struct
 
 
 RAM_START, RAM_END = 0x00210000, 0x00220000
+# Ranges this dongle has answered reads across in full. A capture must sit
+# entirely inside one of them. 0x000a0000 and 0x0880a0a8 hang the controller
+# and lie outside both; keep them out.
+ROM_START, ROM_END = 0x00001000, 0x0009F000
+READABLE_RANGES = ((ROM_START, ROM_END), (RAM_START, RAM_END))
 WORD_LAYOUTS = {
     "native": (0, 1, 2, 3),
     "swap16": (1, 0, 3, 2),
@@ -19,8 +24,11 @@ WORD_LAYOUTS = {
 
 
 def validate_range(start, words):
-    if start % 4 or words < 1 or not RAM_START <= start < start + words * 4 <= RAM_END:
-        raise ValueError("Use aligned four-byte words entirely within 0x00210000..0x0021ffff")
+    end = start + words * 4
+    inside = any(lo <= start < end <= hi for lo, hi in READABLE_RANGES)
+    if start % 4 or words < 1 or not inside:
+        raise ValueError("Use aligned four-byte words entirely within "
+                         "0x00001000..0x0009efff or 0x00210000..0x0021ffff")
     return start, words
 
 
