@@ -228,3 +228,15 @@ made mid-session; read FIRMWARE.md top-to-bottom, the later "CORRECTION" and
 3. **Purpose-built hardware.** A standalone Bluetooth-to-USB-audio receiver (the
    Creative BT-W / Sennheiser BTD 600 architecture) reaches the music goal without
    this reverse-engineering; fastest path if the goal is just audio in the car.
+
+### Update — flash dump completed to full 2 MB
+
+The resumable page-skipping dump finished: `results/flash-backup/flash-20261017T023847Z.bin`
+is now the full 2 MB span (0x00200000..0x00400000), sha256
+`5b701222ea076e324a039b25ff79ada4fb843a0e50a444f9ff44f080f9b9c3df`. 62.5% is real
+readable flash; 37.5% (192 ranges in the `.gaps` file) are unmapped/fault pages
+fc61 could not read, filled with 0xff — those are NOT true contents and must be
+re-read before any restore/write-back. Copies of this image, the ROM dump
+(0x1000..0x9f000) and the 0x210000 RAM window were exported to
+`~/Documents/ChatGPT/fauxPod/dart-usb/results/flash-backup/` with a MANIFEST.md
+(checksums + the flash-routine addresses for the RAM-helper approach).
