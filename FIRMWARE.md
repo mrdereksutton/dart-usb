@@ -676,3 +676,14 @@ have no read path to the regions that matter. The remaining dongle route is the
 hardware UART programming pins (Realtek's intended flash interface), which can
 reach what USB cannot but requires opening the dongle and wiring to those pins.
 Track A (Pi iPod-gadget + Bluetooth sink) needs none of this.
+
+### Flash firmware uses a DesignWare USB OTG device stack, 2026-10-17
+
+Strings in the flash image name the USB core: `dwc_otg_pcd` (0x2c04d8) plus
+`USB_OTG_T` / `USB_OTG_D` (0x3119f4 / 0x311ca4). So the controller's USB side is a
+Synopsys DesignWare USB OTG core driven by a Peripheral Controller Driver (PCD) —
+the same family as Linux's dwc2. The PCD is what presents the USB device to a
+host; the descriptor handler at 0x205ca2 feeds it. This is the subsystem that
+determines what the dongle enumerates as, and it is a documented core, so its
+endpoint/descriptor registration follows a known pattern. Noted as a lead for
+reading how the device identity is configured once the full flash is dumped.
