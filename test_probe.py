@@ -186,6 +186,11 @@ class MemoryRangeValidationTests(unittest.TestCase):
         self.assertEqual(
             probe.validate_memory_range(0x00217e88, 1), (0x00217e88, 1))
 
+    def test_flash_mapped_region_allowed(self):
+        # Flash is mapped at 0x200000; the firmware/handlers are read here.
+        self.assertEqual(probe.validate_memory_range(0x00200000, 16), (0x00200000, 16))
+        self.assertEqual(probe.validate_memory_range(0x00205ca2 & ~3, 8), (0x00205ca0, 8))
+
     def test_poke_address_must_be_in_an_allowed_page(self):
         self.assertEqual(probe.validate_write_address(0x002103d8), 0x002103d8)
         with self.assertRaises(ValueError):

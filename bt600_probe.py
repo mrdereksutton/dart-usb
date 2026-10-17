@@ -48,9 +48,10 @@ MEMORY_RANGE_START, MEMORY_RANGE_END = 0x00217000, 0x00218000
 # must stay inside ONE page. Do not expand into untested flash/peripheral
 # windows, and never target 0x000a0000 or 0x0880a0a8 (they hang the controller).
 MEMORY_READ_PAGES = (
-    (0x00205000, 0x00206000),
+    (0x00200000, 0x00206000),
     (0x00210000, 0x00212000),
     (0x00217000, 0x00218000),
+    (0x00280000, 0x00281000),
     (0x00285000, 0x00286000),
     (0x00288000, 0x00289000),
 )

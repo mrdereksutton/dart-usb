@@ -341,3 +341,43 @@ Consequences, and they reshape the project:
 Bench reverse-engineering can still use a logical-reset loop to learn how the
 0x205ca2 handler builds descriptors from RAM, but that knowledge only reaches the
 car once it can be written to flash.
+
+### Flash layout and write path located in ROM, 2026-10-17
+
+The mask ROM (`0x1000..0x9f000`) contains a complete SPI NOR flash driver, with
+symbol strings: `flash_nor_get_erase_range`, `flash_nor_read_locked_rom`,
+`flash_nor_write_locked_slice_rom`, `flash_nor_erase_locked_rom`,
+`flash_nor_auto_dma_{read,write}_locked_rom`, `flash_task_init_rom`.
+
+**The flash chip (read from the live geometry table at `0x00280734`).** JEDEC ID
+`EF 40 15` = Winbond W25Q16, **2 MB (16 Mbit)**. The command set is stored inline
+in that table: read `0x03`, page-program `0x02`, 4 KB erase `0x20`, 64 KB erase
+`0xd8`, WREN `0x06`, RDSR `0x05`, WRSR `0x01`, RDID `0x9f`. Chip params are at
+`0x00280374`; `0x00280390` holds `0x1000` (4 KB sector).
+
+**The flash is memory-mapped at `0x00200000`.** A read of `0x200000` returns Thumb
+code (`10 b5 ...`) followed by the string ">>> Platform Ext", i.e. the flash holds
+the resident firmware image, mapped for reads at `0x200000` (2 MB window
+`0x200000..0x400000`). This is the firmware that runs in the car: it boots from
+flash with no host download. The USB descriptor handler at `0x205ca2` is therefore
+flash offset `0x5ca2`.
+
+**Write command (`flash_nor_write_locked_slice_rom` @ `0x0000cc34`).** It issues
+WREN then Page-Program (`0x02`) in 256-byte pages (it masks addresses to 0x100
+boundaries), choosing 3- or 4-byte addressing at the 16 MB threshold. It submits
+SPIC command nodes through RAM function pointers `*0x00281114` (build/submit),
+`*0x0028033c` (execute), `*0x00281118` (cleanup). Erase
+(`flash_nor_erase_locked_rom`) uses the 4 KB (`0x20`) / 64 KB (`0xd8`) opcodes;
+`flash_nor_get_erase_range` @ `0x0000b728` aligns to those sector sizes.
+`flash_nor_read_locked_rom` @ `0x0000cbb4` is the read counterpart.
+
+**What this means for the car goal.** The car-facing behaviour lives in this 2 MB
+flash, not in RAM and not in a host-downloaded patch. A persistent, car-working
+change = erase the affected 4 KB sector and Page-Program the modified bytes, e.g.
+to alter the descriptor handler at flash `0x5ca2` or the config it reads. The ROM
+exposes the full erase/program path; the flash is mapped at `0x200000` and is
+2 MB. The one remaining unknown is the trigger from the host: the ROM flash
+functions are called internally and the datasheet documents UART pins for flash
+programming, so whether USB/HCI exposes a flash-write opcode (vs needing the UART
+pins or an in-firmware hook) is the next thing to settle. Read-mapping and the
+write routine itself are now known.
