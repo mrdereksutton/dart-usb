@@ -198,21 +198,34 @@ region and have not been read yet.
 So changing what the dongle enumerates as means changing that registered handler
 or the data it reads, both in the `0x28xxxx` region, not patching a ROM table.
 
-### Next experiment (Mac, read-only, bounded)
+### The structure at 0x285c0c is a callback vector
 
-The `0x28xxxx` region is live: ROM code already loads `*0x00281d70` as a function
-pointer and calls it, so that bank is mapped and callable at run time. Read a
-small set of words there with `fc61` to resolve the runtime pointers and find the
-registered descriptor callback:
+Traced every access to `0x00285c0c` in the ROM. It is a dispatch vector: the
+block `0x000769a4..0x00076fb0` loads a function pointer from a fixed offset and
+calls it, one offset per message opcode, across `+0x08, +0x0c, +0x10 ... +0x48`
+(17 slots), with byte flags at `+0x00` and `+0x01`. The descriptor path uses two
+of these slots: `0x00076b7c` calls `*(0x285c0c+0x48)` and the fallback
+`0x00076b1e` calls `*(0x285c0c+0x38)`. No ROM instruction writes these slots with
+a literal; they are installed at init by a register call, so their values live
+only in the live `0x28xxxx` RAM and cannot be resolved from this static dump.
+Everything resolvable offline is now resolved; the builder address is behind
+these slots.
 
-    0x00285254   USB device-context array pointer
-    0x00285c0c   base holding the descriptor callback at +0x48
-    0x00283e84   descriptor-message dispatch table
-    0x0028598c   referenced by the callback bus
+### Next experiment (Mac, read-only, minimal)
+
+The `0x28xxxx` bank is live: ROM code already loads `*0x00281d70` as a function
+pointer and calls it. Read the callback vector with `fc61` to get the handler
+addresses directly:
+
+    0x00285c14 .. 0x00285c54   the 17-word vector (0x285c0c + 0x08 .. +0x48)
+    0x00285254                 USB device-context array pointer (optional cross-check)
+
+The word at `0x00285c0c + 0x48` is the primary descriptor handler and `+0x38` the
+fallback. Both will point back into ROM, inside this dump, so once read they can
+be disassembled offline to see how the descriptor bytes are staged and whether a
+UAC1 streaming endpoint can be added.
 
 The current `--read-range` reader is whitelisted to `0x00217000..0x00217fff`;
-widen it to cover `0x00283000..0x00286000` for this one read, a few aligned words
-at a time, stopping on the first failed read (as the existing reader does). Do not
-read `0x000a0000` or `0x0880a0a8`; those hang the controller. If `0x28xxxx` reads
-clean, the word at `0x00285c0c + 0x48` is the descriptor handler to disassemble
-next (it will point back into ROM, within this dump, so it can be read offline).
+widen it to `0x00285000..0x00286000` for this read, a few aligned words at a time,
+stopping on the first failed read (as the existing reader does). Do not read
+`0x000a0000` or `0x0880a0a8`; those hang the controller.
