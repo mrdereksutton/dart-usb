@@ -118,47 +118,49 @@ CUSTOM_MARKER_VALUE = 0xDEADBEEF  # device context at 0x2103a8 so it is not reus
 
 
 def build_custom_marker_patch(code, marker_addr=CUSTOM_MARKER_ADDR,
-                              marker_value=CUSTOM_MARKER_VALUE):
-    """Insert an entry hook into the stock patch code that runs appended Thumb
-    code at launch: it writes marker_value to marker_addr, performs the patch's
-    displaced first instruction, then returns into the patch. Proves custom code
-    runs on the controller. All intra-patch branches are PC-relative (no load
-    address needed); only the marker address is absolute. Returns the larger
-    patch bytes. Verified by disassembly in test_probe.py."""
+                              marker_value=CUSTOM_MARKER_VALUE, inject_at=0xA0):
+    """Hook the stock patch entry to marker-write code placed at offset inject_at
+    (default 0xA0, overwriting the patch's cut-off second routine). The injected
+    Thumb code writes marker_value to marker_addr, runs the displaced original
+    first instruction, then returns into the patch body. With inject_at inside the
+    248-byte patch, everything is within the bytes the controller loads, so it does
+    not depend on any appended region being loaded. All intra-patch branches are
+    PC-relative; only the marker address is absolute. Patch size is unchanged.
+    Verified by disassembly in test_probe.py."""
     code = bytearray(code)
     entry = bytes(code[0:2])
     if entry != b"\x70\xb5":            # push {r4, r5, r6, lr}
         raise RuntimeError("Unexpected patch entry; refusing to build custom patch")
-    base = len(code)
-    if base % 4:
-        raise RuntimeError("Patch code length must be four-byte aligned")
+    if inject_at % 4 or inject_at + 24 > len(code):
+        raise RuntimeError("inject_at must be 4-aligned with room for the stub")
 
     def branch(frm, to):                # Thumb T2 unconditional branch (b.n)
         return struct.pack("<H", 0xE000 | (((to - (frm + 4)) >> 1) & 0x7FF))
 
-    code[0:2] = branch(0, base)         # hook: entry -> appended code
-    extra = bytearray()
-    extra += b"\x03\xb4"                # push {r0, r1}
-    extra += b"\x00\x48"                # ldr r0, [pc, #v]   (fixed up below)
-    extra += b"\x00\x49"                # ldr r1, [pc, #a]
-    extra += b"\x08\x60"                # str r0, [r1]
-    extra += b"\x03\xbc"                # pop {r0, r1}
-    extra += entry                      # push {r4, r5, r6, lr}  (displaced original)
-    extra += branch(base + 12, 2)       # b back to patch+2
-    extra += b"\x00\xbf"                # nop (align data to 4)
-    val_off = len(extra); extra += struct.pack("<I", marker_value)
-    addr_off = len(extra); extra += struct.pack("<I", marker_addr)
+    code[0:2] = branch(0, inject_at)    # hook: entry -> injected stub
+    stub = bytearray()
+    stub += b"\x03\xb4"                 # push {r0, r1}
+    stub += b"\x00\x48"                 # ldr r0, [pc, #v]   (fixed up below)
+    stub += b"\x00\x49"                 # ldr r1, [pc, #a]
+    stub += b"\x08\x60"                 # str r0, [r1]
+    stub += b"\x03\xbc"                 # pop {r0, r1}
+    stub += entry                       # push {r4, r5, r6, lr}  (displaced original)
+    stub += branch(inject_at + 12, 2)   # b back to patch+2
+    stub += b"\x00\xbf"                 # nop (align data to 4)
+    val_off = len(stub); stub += struct.pack("<I", marker_value)
+    addr_off = len(stub); stub += struct.pack("<I", marker_addr)
 
     def ldr_literal(at, rt, target):
-        pc = (base + at + 4) & ~3
-        imm8 = (base + target - pc) // 4
+        pc = (inject_at + at + 4) & ~3
+        imm8 = (inject_at + target - pc) // 4
         if not 0 <= imm8 < 256:
             raise RuntimeError("ldr literal out of range")
         return struct.pack("<H", 0x4800 | (rt << 8) | imm8)
 
-    extra[2:4] = ldr_literal(2, 0, val_off)
-    extra[4:6] = ldr_literal(4, 1, addr_off)
-    return bytes(code) + bytes(extra)
+    stub[2:4] = ldr_literal(2, 0, val_off)
+    stub[4:6] = ldr_literal(4, 1, addr_off)
+    code[inject_at:inject_at + len(stub)] = stub
+    return bytes(code)
 
 
 def custom_marker_payload(rom_version, marker_addr=CUSTOM_MARKER_ADDR,

@@ -251,13 +251,13 @@ class CustomMarkerPatchTests(unittest.TestCase):
         md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
         first = next(md.disasm(patch[:2], 0))
         self.assertEqual(first.mnemonic, "b")
-        self.assertEqual(first.op_str, "#0xf8")  # branch to appended code at 248
+        self.assertEqual(first.op_str, "#0xa0")  # branch to injected stub at 0xa0
 
     def test_appended_code_writes_marker_and_returns(self):
         import capstone
         patch = self._patch()
         md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
-        seq = [(i.mnemonic, i.op_str) for i in md.disasm(patch[248:248 + 16], 248)]
+        seq = [(i.mnemonic, i.op_str) for i in md.disasm(patch[0xa0:0xa0 + 16], 0xa0)]
         self.assertEqual(seq[0], ("push", "{r0, r1}"))
         self.assertEqual(seq[3], ("str", "r0, [r1]"))
         self.assertEqual(seq[4], ("pop", "{r0, r1}"))
@@ -266,8 +266,8 @@ class CustomMarkerPatchTests(unittest.TestCase):
 
     def test_marker_value_and_address_present(self):
         patch = self._patch()
-        self.assertEqual(struct.unpack_from("<I", patch, 248 + 16)[0], probe.CUSTOM_MARKER_VALUE)
-        self.assertEqual(struct.unpack_from("<I", patch, 248 + 20)[0], probe.CUSTOM_MARKER_ADDR)
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 16)[0], probe.CUSTOM_MARKER_VALUE)
+        self.assertEqual(struct.unpack_from("<I", patch, 0xa0 + 20)[0], probe.CUSTOM_MARKER_ADDR)
 
     def test_marker_address_is_in_an_allowed_read_page(self):
         probe.validate_memory_range(probe.CUSTOM_MARKER_ADDR, 1)  # must not raise
