@@ -437,3 +437,36 @@ mechanism differs from the simple addr+len guess and needs more work.
 
 Net: the safety net for modifying the handler (erase sector 0x205000, reprogram)
 exists, since that sector's original bytes are in this backup.
+
+### Feasibility conclusion: no UAC1/iAP path exists in the stock flash, 2026-10-17
+
+Searched the backed-up flash firmware (`0x200000..0x225000`, 99% of the active
+image) for any USB-audio machinery. Results:
+
+- No stored descriptors (the config header `09 02 c8 00`, the class triple
+  `e0 01 01`, the ascending iso-size table, and the VID/PID pair are all absent;
+  descriptors are built dynamically, as already established).
+- **Zero audio-class interface descriptors** (`bInterfaceClass 0x01`) anywhere.
+- No `UAC`, `audio`, `isoc`, `iAP`, `usb_desc` or similar strings.
+
+So the stock firmware is only a Bluetooth HCI controller. There is no UAC1
+isochronous-audio or iPod/iAP subsystem to enable, and no descriptor table to
+edit toward one. Consequences:
+
+- The flash **write mechanism is fully characterized and usable** (W25Q16 at
+  `0x200000`; ROM driver `flash_nor_write/erase` @ `0xcc34`/erase; host triggers
+  `fc2a`/`fc2b`; the handler's 4 KB sector is backed up). That part of the goal
+  is done.
+- But making the dongle **present as a UAC1/iPod device cannot be done by editing
+  or patching this image**. It would require writing a complete custom firmware
+  that implements the USB-audio device class (isochronous streaming), the iAP
+  side, and the Bluetooth A2DP sink that feeds them, then flashing it. That is a
+  ground-up firmware project, needs an RTL8761CU build toolchain (the Realtek SDK
+  is behind a RealMCU login), and every flash write carries permanent-brick risk
+  with no replug recovery.
+
+This is the real blocker, now precisely located: not an unknown write path (that
+is solved), but the absence of any audio capability in the stock firmware. The
+project's next phase is firmware development with a proper toolchain, not a flash
+edit of the stock image. No flash write should be attempted against the stock
+firmware toward this goal; it cannot succeed and can only brick the device.
