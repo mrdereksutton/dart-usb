@@ -51,9 +51,13 @@ MEMORY_READ_PAGES = (
     (0x00200000, 0x00206000),
     (0x00210000, 0x00212000),
     (0x00217000, 0x00218000),
+    (0x00225000, 0x00226000),
+    (0x00230000, 0x00231000),
     (0x00280000, 0x00281000),
     (0x00285000, 0x00286000),
     (0x00288000, 0x00289000),
+    (0x00300000, 0x00301000),
+    (0x003ff000, 0x00400000),
 )
 MAX_MEMORY_WORDS = 256
 # idVendor/idProduct bytes as they appear inside a USB device descriptor
@@ -684,11 +688,24 @@ def main(argv=None):
                   f"to {args.dump_flash} (resume at +0x{resume:x})", flush=True)
             digest = _h.sha256()
             t0 = time.monotonic()
+            gaps_path = args.dump_flash + ".gaps"
             with open(args.dump_flash, mode) as out:
                 out.seek(resume)
                 address = flash_start + resume
                 while address < flash_end:
-                    data = read_word_retry(address)
+                    try:
+                        data = read_word_retry(address, tries=3)
+                    except RuntimeError as err:
+                        # A few flash words reliably fault and drop the device off
+                        # USB (e.g. 0x225000). Mark the word, record it, and stop so
+                        # a rerun (fresh enumeration) resumes past it.
+                        out.write(b"\xff\xff\xff\xff")
+                        out.flush()
+                        with open(gaps_path, "a") as g:
+                            g.write(f"0x{address:08x} {err}\n")
+                        print(f"  gap at 0x{address:08x}: {err}; marked ffffffff, rerun resumes "
+                              f"at 0x{address + 4:08x}", flush=True)
+                        break
                     out.write(data)
                     digest.update(data)
                     address += 4
