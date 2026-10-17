@@ -551,3 +551,31 @@ Bluetooth audio links at the controller level, consistent with Realtek's codec-
 offload / Auracast claims. What is absent is an A2DP/LE-Audio SINK profile that
 decodes to PCM and a USB-Audio-Class presentation to a host; those are the parts
 a car-side bridge still needs and that no public firmware provides for this chip.
+
+### B1 result: custom-patch delivery works; patch is NOT entered at offset 0, 2026-10-17
+
+Built `--load-custom`: it takes the stock 248-byte ARM patch, hooks the entry
+(offset 0) to appended Thumb that writes 0xDEADBEEF to 0x00211F00, and downloads
+the modified patch over fc20. Hardware results:
+
+- **Delivery works.** The modified patch downloads and launches with no brick;
+  the running version changes to 0x7bf15762 exactly as the stock patch does. So
+  we can deliver arbitrary modified patch bytes to the controller.
+- **The entry hook did NOT execute.** The marker never appeared at 0x00211F00,
+  and fc62 confirms 0x00211F00 is good writable RAM (write/readback/restore ok),
+  so the address is fine; the write simply never happened.
+- **The version is not an execution signal.** Replacing the entry with `bx lr`
+  (patch should do nothing) still changed the version to 0x7bf15762, so the ROM
+  updates the reported version during the download itself, independent of running
+  the patch body from offset 0.
+
+Conclusion: the RTL8761CU ROM does not invoke the downloaded patch as straight-
+line code from offset 0. The patch is applied by a ROM mechanism (likely a
+patch-apply routine that registers/▸calls specific entry points, or processes the
+patch structure), so a hook must go where control actually flows, not at offset 0.
+
+Next step (matches Dark Mentor's method for the B chip): trace the CU ROM's fc20
+download-complete / patch-apply handler in the ROM dump to find (a) where the
+patch is loaded in RAM and (b) the point where the ROM transfers control into it.
+Hook there. The delivery path and the custom-patch builder are already in place;
+only the correct hook location is missing.
