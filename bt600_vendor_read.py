@@ -249,6 +249,8 @@ def main():
     if not library:
         print("Homebrew libusb was not found.", flush=True)
         return 1
+    from usb_access_guard import require_usb_access
+    require_usb_access()
     usb = C.CDLL(library)
     signatures = {
         "libusb_init": ([C.POINTER(PTR)], C.c_int),

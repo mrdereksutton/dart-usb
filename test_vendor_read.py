@@ -142,7 +142,7 @@ class ProbeLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             script = Path(temp) / 'probe.py'
             script.write_text('test provenance')
-            with patch.object(probe, '__file__', str(script)), patch.object(probe.C, 'CDLL', return_value=usb), patch.object(probe.Path, 'is_file', return_value=True), patch('sys.argv', ['probe', '--descriptor-targets']), patch('builtins.print'):
+            with patch.object(probe, '__file__', str(script)), patch.object(probe.C, 'CDLL', return_value=usb), patch.object(probe.Path, 'is_file', return_value=True), patch('usb_access_guard.BLOCK_FILE', Path(temp) / 'USB_ACCESS_DISABLED'), patch('sys.argv', ['probe', '--descriptor-targets']), patch('builtins.print'):
                 code = probe.main()
             paths = list((Path(temp)/'results').glob('*.json'))
             self.assertEqual(len(paths), 1)

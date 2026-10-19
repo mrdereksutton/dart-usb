@@ -1,5 +1,11 @@
 # Dart USB — ASUS USB-BT600 / RTL8761C research
 
+**Hardware work resumed with the owner's authorization on October 19.** A native
+IOUSBHost transport and resident audio/HID descriptor trial now work on the BT600.
+See [HARDWARE_RESUME.md](HARDWARE_RESUME.md) and [UCONNECT_TARGET.md](UCONNECT_TARGET.md).
+Legacy libusb interface-claim paths remain blocked after the macOS panics recorded
+in [CRASH_INCIDENT.md](CRASH_INCIDENT.md).
+
 Current continuation: **custom RAM code runs on the dongle through its USB setup
 callback**, and a RAM helper successfully calls its resident flash-read routine.
 A reversible edit also changes the actual USB descriptor reply. A complete

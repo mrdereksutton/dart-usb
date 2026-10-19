@@ -1,5 +1,17 @@
 # Dart USB handoff
 
+## Hardware resumed by the owner — 2026-10-19
+
+The owner explicitly authorized resuming hardware and said to continue until it
+works. That supersedes the October 17 STOP. Read [HARDWARE_RESUME.md](HARDWARE_RESUME.md)
+for the working native IOUSBHost flow and the completed resident descriptor trial.
+Do not ask again to resume routine reversible hardware work. The legacy
+`USB_ACCESS_DISABLED` markers remain to block old libusb interface-claim paths
+that triggered macOS panics; do not remove them broadly or rerun those claims.
+Native HCI reads, checked pool-5 RAM allocation and the resident descriptor program
+have now passed on the physical BT600, with restoration verified. No persistent
+writes have been made. Continuous audio, Bluetooth receive and cold boot remain.
+
 ## Goal and communication
 
 Repurpose the existing ASUS USB-BT600 into a standalone wireless iPhone audio

@@ -1,3 +1,31 @@
+# Hardware resumed; resident descriptors passed — 2026-10-19
+
+The owner explicitly resumed hardware work and said to continue. This supersedes
+the October 17 STOP and older pause statements below. Legacy `USB_ACCESS_DISABLED`
+files stay in both checkouts to block the libusb interface-claim path. Use the
+native IOUSBHost transport in `bt600_native_hci.m`; routine reversible hardware
+work is already authorized. Read `HARDWARE_RESUME.md` and `UCONNECT_TARGET.md`.
+
+Actual hardware success: ROM/context reads, checked pool-5 allocate/free of 4096
+bytes at `0x00312280`, and a 1032-byte resident program returning our device,
+configuration header/full configuration and HID report descriptors. Four native
+completions, zero errors; every reply matches the existing portable core. The
+program unloaded, callbacks/EP0/selector/scratch/configuration restored and free
+heap returned to 7648 bytes. Report:
+`results/native-hci-resident-profile-20261019-first.json`, `success: true`.
+
+The first 16 KiB pool-6 trial was wrong: that alias points at occupied memory and
+stalled the dongle. The owner's replug cleared it, and stock recovery was verified.
+Use only a fresh checked walk of active pool 5. The resident probe also temporarily
+selects pool 5 for native queue bookkeeping, then restores the selector.
+
+Live EP0 uses descriptor-DMA, with identity CPU/DMA SRAM buffer addresses confirmed
+from the stock request. Resident tests now include that mode. The physical trial
+used descriptor index 126 to leave normal Mac enumeration stock. Audio streaming,
+full iAP, Bluetooth receive and persistent startup remain. No flash/efuse writes.
+Next: measured-memory integration of complete control/audio code, real periodic
+service and continuous PCM, then the Uconnect acceptance session.
+
 # Current continuation — 2026-10-17
 
 ## USB descriptor edit succeeded

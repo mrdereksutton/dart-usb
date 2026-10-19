@@ -122,6 +122,8 @@ def load_libusb():
     if not library:
         print("The libusb library could not be found.")
         return None
+    from usb_access_guard import require_usb_access
+    require_usb_access()
     usb = C.CDLL(library)
     signatures = {
         "libusb_init": ([C.POINTER(P)], C.c_int),
