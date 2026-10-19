@@ -1,4 +1,27 @@
-# USB audio source core
+# USB audio and iAP bridge core
+
+The portable receiver component now handles an Audio Class 1 source and iAP HID
+configuration, host setup requests, a bounded stereo PCM ring buffer, iAP frame
+fragmentation/reassembly and checksums, and track title/artist/album/status replies.
+It runs in host tests and cross-compiles for the dongle's ARM target. The native
+RTL8761C endpoint driver and Bluetooth receiver still need to be connected.
+
+Build a listenable demo, packet traces, ARM objects and a source bundle without
+opening USB:
+
+```sh
+python3 -m unittest -v test_usb_bridge
+python3 run_offline_bridge_demo.py
+```
+
+The generated folder contains `audio-44100.wav`, `audio-48000.wav`, `demo.json`,
+the exact USB packet bytes, and `dart-usb-offline-bridge.zip`. The audio comes
+through the same C FIFO and packetizer intended for firmware. The simulated host
+also asks for a long track title and receives two checked HID reports.
+
+See [BRIDGE.md](BRIDGE.md) for the port boundary, memory use and supported requests.
+
+## PCM packetizer
 
 `usb_audio_source.c` generates full-speed USB packets for stereo 16-bit PCM.
 At 48 kHz every packet is 192 bytes. At 44.1 kHz packets contain 44 or 45 stereo
