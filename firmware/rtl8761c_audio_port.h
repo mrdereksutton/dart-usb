@@ -26,7 +26,7 @@ typedef struct {
     void *allocate_request, *free_request, *allocate_buffer, *free_buffer;
     int (*queue)(dart_rtl_endpoint *, dart_rtl_request *);
     int (*dequeue)(dart_rtl_endpoint *, dart_rtl_request *);
-    void *set_halt;
+    int (*set_halt)(dart_rtl_endpoint *, int);
 } dart_rtl_endpoint_ops;
 
 struct dart_rtl_endpoint {

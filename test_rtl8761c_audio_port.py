@@ -189,6 +189,17 @@ class NativeAudioPortTests(unittest.TestCase):
         self.assertEqual(self.invoke(machine, symbols, "stat", 4), 48)
         self.assertEqual(self.invoke(machine, symbols, "stat", 5), 0)
 
+    def test_stopped_adapter_does_not_clear_another_endpoint_owner(self):
+        machine, symbols = self.model()
+        self.assertEqual(self.invoke(machine, symbols, "stop"), 0)
+        machine.put_word(native.EP3 + 20, native.DESCRIPTOR)
+        machine.put_word(native.EP3 + 24, 63)
+        before = len(machine.calls)
+        self.assertEqual(self.invoke(machine, symbols, "stop"), 0)
+        self.assertEqual(machine.word(native.EP3 + 20), native.DESCRIPTOR)
+        self.assertEqual(machine.word(native.EP3 + 24), 63)
+        self.assertEqual(len(machine.calls), before)
+
 
 if __name__ == "__main__":
     unittest.main()

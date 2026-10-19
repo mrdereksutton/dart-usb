@@ -113,14 +113,13 @@ clang objects into Unicorn memory; it never uploads code.
 
 ## Next integration gate
 
-1. Route the captured native EP0 setup/data/status stages through
-   `dart_usb_control`, with address changes deferred until status completion.
-2. Assign verified resident RAM and implement the device's DMA/cache mapping,
-   millisecond service trigger and serialized completion dispatch.
-3. Connect configuration/alternate/reset events to stop/drain/start, and add
-   interrupt IN `0x81` delivery for iAP reports with the same ownership rules.
-4. Replay enumeration, rate changes and cancellation through the combined native
-   port before preparing a bounded hardware enumeration/audio experiment.
+The EP0/configuration/alternate/reset connection is now implemented in
+`rtl8761c_control_port.c` and covered by combined native replay. Read
+[CONTROL_PORT.md](CONTROL_PORT.md) for the current result and task entry.
+
+Next: assign resident RAM, connect the millisecond task to the native scheduler,
+establish device DMA/cache handling and add interrupt IN `0x81` delivery for iAP.
+These precede a bounded hardware enumeration/audio experiment.
 
 Bluetooth A2DP/SBC reception, AVRCP metadata, the full iAP session and persistent
 startup follow that controller integration. The current USB pause files stay

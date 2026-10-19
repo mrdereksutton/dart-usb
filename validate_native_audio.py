@@ -20,14 +20,14 @@ DISABLE = 0x020BD3B2
 DEQUEUE = 0x020BD492
 
 
-def build_objects(directory):
+def build_objects(directory, sources=None):
     compiler = shutil.which("clang")
     if not compiler:
         raise RuntimeError("clang is required for the offline ARM replay")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     objects = []
-    for relative in SOURCES:
+    for relative in SOURCES if sources is None else sources:
         path = directory / (Path(relative).stem + ".o")
         result = subprocess.run([compiler, "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33",
             "-mthumb", "-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",

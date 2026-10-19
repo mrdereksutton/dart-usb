@@ -125,6 +125,10 @@ int dart_rtl_audio_service(dart_rtl_audio_port *port)
 int dart_rtl_audio_stop(dart_rtl_audio_port *port)
 {
     if (!port || !port->bridge) return -22;
+    if (!port->enable_attempted) {
+        port->stopping = 0;
+        return 0; /* An idle adapter owns no endpoint state to restore. */
+    }
     port->stopping = 1;
     for (size_t i = 0; i < 2; ++i) {
         dart_rtl_audio_slot *slot = &port->slots[i];

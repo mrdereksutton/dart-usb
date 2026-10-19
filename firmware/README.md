@@ -6,8 +6,10 @@ fragmentation/reassembly and checksums, and track title/artist/album/status repl
 It runs in host tests and cross-compiles for the dongle's ARM target. The native
 audio adapter now runs against the captured RTL8761C endpoint driver in ARM
 emulation: a 192-byte request reaches its ISO software queue, and both sample
-rates pass a 1,000-packet wrapper replay. Native EP0 routing, device DMA/cache
-mapping and the Bluetooth receiver remain integration work.
+rates pass a 1,000-packet wrapper replay. The native control adapter now connects
+host enumeration, configuration, rate changes, stream start/stop and reset to
+that audio path. Resident RAM, task scheduling, device DMA/cache handling and
+the Bluetooth receiver remain integration work.
 
 Build a listenable demo, packet traces, ARM objects and a source bundle without
 opening USB:
@@ -25,6 +27,8 @@ also asks for a long track title and receives two checked HID reports.
 See [BRIDGE.md](BRIDGE.md) for the port boundary, memory use and supported requests.
 See [NATIVE_AUDIO_PORT.md](NATIVE_AUDIO_PORT.md) for the captured driver ABI,
 adapter lifecycle, exact replay scope and reproducible native queue checks.
+See [CONTROL_PORT.md](CONTROL_PORT.md) for the connected native enumeration and
+stream-control path. `validate_native_control.py` replays it without USB access.
 
 ## PCM packetizer
 

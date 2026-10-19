@@ -75,7 +75,8 @@ The native controller integration must provide:
 
 1. Enumeration/setup routing into `dart_usb_control`. The function accepts the
    complete OUT data stage and copies IN replies into port-owned memory. Address
-   changes reach the controller only after the status stage.
+   handling remains in the native PCD. `rtl8761c_control_port.c` now supplies this
+   connection, stable EP0 buffers and delayed status; see CONTROL_PORT.md.
 2. Endpoint configuration for interrupt IN `0x81` and 192-byte ISO IN `0x83`.
    The audio adapter's descriptor is accepted by the captured native enable and
    ISO software queue with 192 bytes. Physical controller setup, interrupt IN
@@ -86,6 +87,8 @@ The native controller integration must provide:
    when the hardware queue is busy.
 4. Serialized producer, setup and completion calls. Cancel/drain endpoint DMA
    before resetting state or changing configuration, alternate or sample rate.
+   The control adapter now coordinates those transitions and supplies a combined
+   millisecond entry. Native scheduling and critical-section integration remain.
 5. Delivery of checked iAP payloads to the session owner. Use
    `dart_iap_metadata_reply` for supported metadata queries, queue the reply, and
    advance each outgoing HID report only after successful transfer completion.
