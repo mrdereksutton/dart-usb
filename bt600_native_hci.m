@@ -3,6 +3,11 @@
 #import <IOKit/IOKitLib.h>
 #import <IOUSBHost/IOUSBHost.h>
 #include <unistd.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <sys/file.h>
+static volatile sig_atomic_t cancelled;
+static unsigned cleanupDepth;
 
 static NSMutableDictionary *record;
 static NSString *output;
@@ -30,6 +35,7 @@ static NSString *hex(NSData *data) {
 
 static NSData *control(IOUSBHostObject *device, uint8_t type, uint8_t request,
                        uint16_t value, uint16_t index, NSMutableData *data) {
+    require(!cancelled || cleanupDepth,@"Cancelled before USB request",nil);
     IOUSBDeviceRequest setup = {.bmRequestType=type, .bRequest=request,
         .wValue=value, .wIndex=index, .wLength=(uint16_t)data.length};
     NSError *error = nil; NSUInteger transferred = 0;
@@ -40,6 +46,7 @@ static NSData *control(IOUSBHostObject *device, uint8_t type, uint8_t request,
 }
 
 static NSData *hci(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint16_t opcode, NSData *parameters) {
+    require(!cancelled || cleanupDepth,@"Cancelled before HCI command",nil);
     NSError *error = nil;
     NSMutableData *rx = [interface ioDataWithCapacity:260 error:&error];
     require(rx != nil, @"Allocate event buffer", error);
@@ -100,6 +107,9 @@ static void write_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint3
     require(reply.length==1,@"RAM write acknowledgement",nil);
     require(read_word(interface,pipe,address)==value,@"RAM write readback",nil);
 }
+
+#include "native_iso_capture.h"
+#include "native_reenumerate.h"
 
 static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, NSString *root, uint32_t allocation) {
     NSString *folder=[root stringByAppendingPathComponent:@"results/native-host-build/resident"];
@@ -163,6 +173,7 @@ static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe,
             @"Resident cleanup returns the stock descriptor",nil);
         record[@"resident_profile"][@"verified"]=@YES;
     } @finally {
+        cleanupDepth++;
         write_word(interface,pipe,0x0030d164,0x020be8a1);
         /* A subsequent HCI setup drains any older EP0 request before this read.
          * Keep the allocated callback storage alive unless that is confirmed. */
@@ -175,10 +186,14 @@ static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe,
         if(read_word(interface,pipe,0x002c10d8)!=selector)write_word(interface,pipe,0x002c10d8,selector);
         record[@"resident_profile"][@"restored"]=@YES;
         checkpoint(@"resident callback and endpoint restored");
+        cleanupDepth--;
     }
 }
 
-static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, NSString *root, BOOL resident) {
+#include "native_resident_stream.h"
+#include "native_stream_recovery.h"
+
+static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, NSString *root, BOOL resident, void (^runResident)(uint32_t)) {
     require(read_word(interface,pipe,0x00281308)==0x00018c9b &&
             read_word(interface,pipe,0x00281310)==0x00018d25 &&
             (read_word(interface,pipe,0x00280eb8)&255)==5,@"Active native allocator profile",nil);
@@ -222,6 +237,8 @@ static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, 
             write_word(interface,pipe,0x00211e30+(uint32_t)i,word);
         }
         require(read_word(interface,pipe,0x0030d164)==callback,@"Callback still original before installation",nil);
+        require(!cancelled,@"Cancelled before allocator execution",nil);
+        cleanupDepth++; /* Finish recording ownership once allocation starts. */
         attempted=YES;
         write_word(interface,pipe,0x0030d164,0x00211e31);
         checkpoint(@"before allocator helper execution");
@@ -234,9 +251,11 @@ static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, 
         require(marker==(resident ? 0xd47a5211 : 0xd47a5011),@"Allocator helper completed",nil);
         require(allocation==eligible,@"Allocation from the verified free block",nil);
         require(read_word(interface,pipe,0x0030d164)==callback,@"Helper restored the callback itself",nil);
+        cleanupDepth--;
         if(resident) {
-            @try { resident_profile(interface,pipe,root,allocation); }
+            @try { runResident(allocation); }
             @finally {
+                cleanupDepth++;
                 if(!record[@"resident_profile"] || [record[@"resident_profile"][@"restored"] boolValue]) {
                     write_word(interface,pipe,0x00211f00,1);
                     write_word(interface,pipe,0x0030d164,0x00211e31);
@@ -246,11 +265,13 @@ static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, 
                         read_word(interface,pipe,0x0028199c)==freeBytes,@"Resident allocation freed and heap restored",nil);
                     record[@"allocator_trial"][@"allocated_and_freed"]=@YES;
                 }
+                cleanupDepth--;
             }
         }
         require(read_word(interface,pipe,0x0028199c)==freeBytes,@"Allocated bytes returned to the active heap",nil);
         record[@"allocator_trial"][@"allocated_and_freed"]=@YES;
     } @finally {
+        cleanupDepth++;
         checkpoint(@"restoring original callback before scratch");
         if (attempted) write_word(interface,pipe,0x0030d164,callback);
         for (NSString *key in original) write_word(interface,pipe,key.intValue,[original[key] unsignedIntValue]);
@@ -260,25 +281,39 @@ static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, 
         record[@"allocator_trial"][@"restore_required"]=@NO;
         record[@"allocator_trial"][@"restored"]=@YES;
         checkpoint(@"allocator trial restored");
+        cleanupDepth--;
     }
 }
 
 int main(int argc, const char **argv) { @autoreleasepool {
-    BOOL resident=argc==4 && strcmp(argv[3],"--resident-profile")==0;
+    BOOL resetContext=argc==4 && strcmp(argv[3],"--reset-context")==0;
+    BOOL recovering=argc==5 && strcmp(argv[3],"--recover-stream")==0;
+    BOOL streamTrial=argc==4 && strcmp(argv[3],"--stream-trial")==0;
+    BOOL resident=streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
+    testIsoPolicy=argc==4 && strcmp(argv[3],"--iso-policy")==0;
+    BOOL isoIdle=testIsoPolicy || (argc==4 && strcmp(argv[3],"--iso-idle")==0);
+    signal(SIGINT,cancel_capture); signal(SIGTERM,cancel_capture);
     BOOL trial=resident || (argc==4 && strcmp(argv[3],"--allocator-trial")==0);
     BOOL heapContext=argc==4 && strcmp(argv[3],"--heap-context")==0;
     BOOL profileContext=argc==4 && strcmp(argv[3],"--profile-context")==0;
-    if (argc != 3 && !trial && !heapContext && !profileContext) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--heap-context|--profile-context]\n"); return 2; }
+    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--iso-idle|--iso-policy|--heap-context|--profile-context]\n"); return 2; }
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     output = [NSString stringWithUTF8String:argv[2]];
     NSDictionary *approval = [NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"results/hardware-resume.json"]]
         options:0 error:nil];
     if (![approval[@"user_authorized_hardware"] boolValue] ||
-        ![approval[@"operations"] containsObject:(resident ? @"native_resident_profile" :
+        ![approval[@"operations"] containsObject:(resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
             trial ? @"native_allocator_trial" : @"native_hci_read")]) return 3;
+    int lease=open("/private/tmp/fauxpod-bt600-native.lock",O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0600);
+    if(lease<0 || flock(lease,LOCK_EX|LOCK_NB)) {
+        if(lease>=0)close(lease);
+        fprintf(stderr,"Another native BT600 worker owns the device lease, or the lease is unavailable.\n");
+        return 4;
+    }
+    ftruncate(lease,0); dprintf(lease,"%d\n",getpid());
     record = [@{@"pid": @(getpid()), @"transport": @"IOUSBHost direct interrupt pipe 0x81",
-        @"persistent_writes": @NO, @"ram_writes": @(trial),
+        @"persistent_writes": @NO, @"ram_writes": @(trial || recovering),
         @"commands": [NSMutableArray array], @"reads": [NSMutableArray array],@"writes":[NSMutableArray array]} mutableCopy];
     IOUSBHostDevice *device = nil; IOUSBHostInterface *interface = nil; IOUSBHostPipe *pipe = nil;
     int original = -1; BOOL changed = NO, success = NO;
@@ -315,7 +350,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
         }
         require(eventPipe, @"Interface 0 alternate 0 interrupt endpoint 0x81", nil);
         checkpoint(@"configuration and interrupt descriptor validated");
-        if (original==0) { changed=YES;
+        if (original==0 || !device.configurationDescriptor) { changed=YES;
+            if(original==1)require([device configureWithValue:0 matchInterfaces:YES error:&error],@"Clear stale device configuration before publishing interfaces",error);
             require([device configureWithValue:1 matchInterfaces:YES error:&error], @"Select configuration 1", error); }
         checkpoint(@"configuration selected");
         io_service_t interfaceService = 0;
@@ -361,6 +397,11 @@ int main(int argc, const char **argv) { @autoreleasepool {
             for(uint32_t at=pcd+0x2c;at<pcd+0x2c+0xb8;at+=4)read_word(interface,pipe,at);
             quiet=NO;
         }
+        if(profileContext) {
+            for(uint32_t at=0x0030be1c;at<=0x0030be38;at+=4)read_word(interface,pipe,at);
+            read_word(interface,pipe,0x0030c55c);read_word(interface,pipe,0x0030c560);
+            for(uint32_t at=0x00312580;at<0x003125d0;at+=4)read_word(interface,pipe,at);
+        }
         if (heapContext) {
             quiet=YES;
             for (uint32_t at=0x00281934;at<=0x002819d4;at+=4) read_word(interface,pipe,at);
@@ -378,11 +419,30 @@ int main(int argc, const char **argv) { @autoreleasepool {
             }
             quiet=NO;
         }
-        if (trial) { quiet=YES; allocator_trial(interface,pipe,root,resident); quiet=NO; }
+        if(streamTrial) {
+            iso_idle(device,configuration); record[@"iso_warmup"]=record[@"iso_capture"];
+            [record removeObjectForKey:@"iso_capture"];
+        }
+        if (trial) { quiet=YES; allocator_trial(interface,pipe,root,resident,^(uint32_t allocation) {
+            if(streamTrial)resident_stream(device,interface,pipe,root,allocation);
+            else resident_profile(interface,pipe,root,allocation);
+        }); quiet=NO; }
+        if(resetContext) {
+            uint32_t heapBefore=read_word(interface,pipe,0x0028199c);
+            native_reenumerate(&device,&interface,&pipe);
+            record[@"reenumeration"][@"heap_before"]=@(heapBefore);
+            record[@"reenumeration"][@"heap_after"]=@(read_word(interface,pipe,0x0028199c));
+            require(read_word(interface,pipe,0x002c12cc)==runtime && read_word(interface,pipe,driver+0x34)==callback,
+                @"RAM USB context and setup callback survived reenumeration",nil);
+            record[@"reenumeration"][@"ram_context_preserved"]=@YES;
+        }
+        if(recovering) { quiet=YES; recover_stream(interface,pipe,root,[NSString stringWithUTF8String:argv[4]]); quiet=NO; }
+        if(isoIdle)iso_idle(device,configuration);
         success=YES;
     } @catch (NSException *exception) {
         record[@"error"]=exception.reason ?: exception.name;
     } @finally {
+        cleanupDepth++;
         if (pipe) { NSError *error=nil; [pipe abortWithOption:IOUSBHostAbortOptionSynchronous error:&error]; pipe=nil; }
         if (interface) [interface destroy];
         if (changed && device) { NSError *error=nil;
@@ -393,9 +453,10 @@ int main(int argc, const char **argv) { @autoreleasepool {
         if (device) [device destroy];
         if (service) IOObjectRelease(service);
         if (iterator) IOObjectRelease(iterator);
-        record[@"success"]=@(success); checkpoint(success ? @"complete" : @"failed");
+        record[@"cancelled"]=@(cancelled!=0); record[@"success"]=@(success); checkpoint(success ? @"complete" : @"failed");
     }
     printf("Report: %s\n",output.UTF8String);
     if (!success) fprintf(stderr,"%s\n",[record[@"error"] UTF8String]);
-    return success ? 0 : 1;
+    flock(lease,LOCK_UN);close(lease);
+    return cancelled ? 130 : success ? 0 : 1;
 }}

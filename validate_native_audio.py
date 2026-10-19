@@ -29,8 +29,8 @@ def build_objects(directory, sources=None):
     objects = []
     for relative in SOURCES if sources is None else sources:
         path = directory / (Path(relative).stem + ".o")
-        result = subprocess.run([compiler, "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33",
-            "-mthumb", "-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
+        result = subprocess.run([compiler, "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33+nodsp",
+            "-mthumb", "-mno-unaligned-access", "-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
             "-Os", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "firmware"),
             "-c", str(ROOT / relative), "-o", str(path)], capture_output=True, text=True, timeout=60)
         if result.returncode:

@@ -199,7 +199,7 @@ def main(argv=None):
     arm_objects = []
     for name in SOURCES:
         object_path = build / (Path(name).stem + ".o")
-        run([*common, "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33", "-mthumb",
+        run([*common, "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33+nodsp", "-mthumb", "-mno-unaligned-access",
              "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-Os", "-c",
              str(ROOT / "firmware" / name), "-o", str(object_path)], commands)
         arm_objects.append(inspect_arm_object(object_path))
@@ -214,7 +214,7 @@ def main(argv=None):
               "profile": profile, "audio": audio,
               "metadata": {"title": title, "hid_report_count": len(reports), "payload_hex": payload.hex(),
                            "session_mode": "legacy, without transaction IDs; IDPS is not simulated"},
-              "arm_target": "armv8m.main-none-eabi / cortex-m33 / Thumb", "arm_objects": arm_objects,
+              "arm_target": "armv8m.main-none-eabi / ARMv8-M Mainline without DSP / Thumb", "arm_objects": arm_objects,
               "combined_unresolved_symbols": [], "build_commands": commands,
               "remaining_integration": ["RTL8761C endpoint queues and EP0 controller port",
                   "iAP IDPS/authentication and digital-audio session", "Bluetooth A2DP/SBC and AVRCP",

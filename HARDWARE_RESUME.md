@@ -5,6 +5,14 @@ is to actually use the hardware,” then “Continue. Lets get this working.” 
 reversible hardware work is authorized. Flash, efuse and full ASUS upgrades remain
 outside the current experiment. Neither legacy pause file was removed.
 
+## Latest physical audio result
+
+The approved two-hour sprint has now captured **32 seconds of physical BT600 USB
+PCM**, with 32,000 consecutive packets, zero transfer errors and verified native
+queue/heap/callback/configuration restoration. SIGINT cancellation also drained and
+restored correctly. See [BT600_SPRINT.md](BT600_SPRINT.md) for exact artifacts,
+compiler compatibility fixes and the remaining receiver/persistent-boot blockers.
+
 ## What passed on the dongle
 
 `bt600_native_hci.m` uses Apple's IOUSBHost framework to open interface 0 and its
@@ -35,9 +43,9 @@ scratch word and restored configuration zero. The local report is
 SHA-256 `60d17588504faaaf24c4be5f956b557f1de4251e5d79dcff215c7315733eaeb9`.
 
 The dongle currently runs stock again. The trial used explicit descriptor index
-126 so the Mac's ordinary enumeration remained stock. No audio was streamed and
-no code was made persistent. Those are the next hardware steps, along with the
-remaining Bluetooth receiver and full iAP session.
+126 so the Mac's ordinary enumeration remained stock. That descriptor trial streamed no audio. The sprint above subsequently streamed
+physical generated PCM. Bluetooth reception, persistence and the car-facing iAP
+session remain unfinished.
 
 ## Corrected allocator and DMA assumptions
 
@@ -56,7 +64,8 @@ Live EP0 has DMA and descriptor-DMA enabled (core word `0x01010020` at
 `0x0030b888`). The stock request at `0x002c1354` uses identical CPU and DMA buffer
 addresses, `0x0030d1c0`. The resident trial used SRAM in the same address range,
 explicit DMA addresses and the existing native EP0 ring. Its successful transfers
-validate that bounded EP0 path. ISO audio still needs its own DMA/timing test.
+validate that bounded EP0 path. The later sprint validates the stock ISO endpoint separately; see its continuity
+and native drain records.
 
 The helpers now run only on the explicit device-descriptor index-1 trigger;
 HCI memory reads/write-readbacks pass through to the stock callback. They also
@@ -85,6 +94,6 @@ original values before writes. Never free resident code until its native request
 has drained. A lost USB transport can prevent restoration; power cycling clears
 these RAM-only changes. Normal successful runs restore everything automatically.
 
-Next: fit the complete control/audio port into the measured heap budget, connect
-the native periodic service and validate an actual continuous PCM transfer. Use
+Next: extend the measured stream to the normal audio profile, connect native
+periodic service and resolve the receiver and persistent application loader. Use
 [UCONNECT_TARGET.md](UCONNECT_TARGET.md) for the car-facing acceptance target.

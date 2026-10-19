@@ -34,8 +34,8 @@ def build(directory, base=0x00312280):
     objects = []
     for source in ("resident_profile_trial.c", "resident_heap_helper.S"):
         target = directory / (Path(source).stem + ".o")
-        subprocess.run(["xcrun", "clang", "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33",
-            "-mthumb", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-Os",
+        subprocess.run(["xcrun", "clang", "-target", "armv8m.main-none-eabi", "-mcpu=cortex-m33+nodsp",
+            "-mthumb", "-mno-unaligned-access", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-Os",
             "-Wall", "-Wextra", "-Werror", "-I", str(directory), "-I", str(ROOT / "firmware"),
             "-c", str(ROOT / "firmware" / source), "-o", str(target)], check=True, capture_output=True)
         objects.append(target)
