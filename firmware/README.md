@@ -4,7 +4,10 @@ The portable receiver component now handles an Audio Class 1 source and iAP HID
 configuration, host setup requests, a bounded stereo PCM ring buffer, iAP frame
 fragmentation/reassembly and checksums, and track title/artist/album/status replies.
 It runs in host tests and cross-compiles for the dongle's ARM target. The native
-RTL8761C endpoint driver and Bluetooth receiver still need to be connected.
+audio adapter now runs against the captured RTL8761C endpoint driver in ARM
+emulation: a 192-byte request reaches its ISO software queue, and both sample
+rates pass a 1,000-packet wrapper replay. Native EP0 routing, device DMA/cache
+mapping and the Bluetooth receiver remain integration work.
 
 Build a listenable demo, packet traces, ARM objects and a source bundle without
 opening USB:
@@ -20,6 +23,8 @@ through the same C FIFO and packetizer intended for firmware. The simulated host
 also asks for a long track title and receives two checked HID reports.
 
 See [BRIDGE.md](BRIDGE.md) for the port boundary, memory use and supported requests.
+See [NATIVE_AUDIO_PORT.md](NATIVE_AUDIO_PORT.md) for the captured driver ABI,
+adapter lifecycle, exact replay scope and reproducible native queue checks.
 
 ## PCM packetizer
 
@@ -43,9 +48,10 @@ python3 -m unittest -v test_usb_audio_source
 ```
 
 The build targets ARMv8-M Mainline instructions used by the CU's Real-M300 core.
-The packetizer is ready for native endpoint queue integration; it has so far
-run in host tests. The USB setup trampoline and a resident ROM flash-read call
-have both executed successfully on the dongle.
+The packetizer now feeds the captured native queue through
+`rtl8761c_audio_port.c` in ARM replay. Physical audio streaming is still pending.
+The USB setup trampoline and a resident ROM flash-read call have both executed
+successfully on the dongle in earlier experiments.
 
 `flash_read_helper.S` preserves the setup caller's registers and flags, reads
 16 bytes through ROM entry `0x0000cbb5`, records its status, and tail-calls the

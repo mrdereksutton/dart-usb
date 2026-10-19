@@ -68,14 +68,18 @@ source copy, tests, host executable, ARM objects, traces and WAVs.
 ## Controller integration boundary
 
 The portable code has no host USB API, fixed firmware addresses, register access,
-allocator or OS calls. A native RTL8761C port must provide:
+allocator or OS calls. The separate `rtl8761c_audio_port.c` adapter now connects
+its audio packets to the saved CU driver's endpoint operations in ARM emulation.
+Read [NATIVE_AUDIO_PORT.md](NATIVE_AUDIO_PORT.md) for the pinned ABI and results.
+The native controller integration must provide:
 
 1. Enumeration/setup routing into `dart_usb_control`. The function accepts the
    complete OUT data stage and copies IN replies into port-owned memory. Address
    changes reach the controller only after the status stage.
 2. Endpoint configuration for interrupt IN `0x81` and 192-byte ISO IN `0x83`.
-   The stock firmware's documented 63-byte SCO setting is insufficient. The saved
-   endpoint mapping is the next integration input; this code does not change it.
+   The audio adapter's descriptor is accepted by the captured native enable and
+   ISO software queue with 192 bytes. Physical controller setup, interrupt IN
+   configuration and DMA/cache integration remain.
 3. One `dart_usb_audio_packet` call per full-speed millisecond **after** securing
    an available native transfer buffer. That buffer must remain valid during DMA.
    The call advances the stream; do not speculatively fill then discard packets
@@ -86,7 +90,9 @@ allocator or OS calls. A native RTL8761C port must provide:
    `dart_iap_metadata_reply` for supported metadata queries, queue the reply, and
    advance each outgoing HID report only after successful transfer completion.
 
-The executable currently uses a host-side controller stand-in for this boundary.
+The listenable demo uses a host-side controller stand-in for this boundary;
+`validate_native_audio.py` separately runs compiled ARM code against the captured
+native endpoint routines with simulated controller memory and completions.
 Bluetooth A2DP/SBC reception, AVRCP input, the full iAP session and persistent
 startup remain necessary for the standalone dongle. Head-unit acceptance will be
 measured in the Dart after the controller port is ready and hardware work resumes.
