@@ -17,7 +17,7 @@ static IOUSBHostInterface *open_audio_interface(void) {
 }
 static NSData *capture_iso(IOUSBHostInterface *audio, IOUSBHostPipe *iso, NSUInteger count,
                           NSUInteger packetBytes, NSMutableArray *frames, void (^pump)(void)) {
-    require(count && count<=32000 && packetBytes && packetBytes<=192,@"Bound capture allocation",nil);
+    require(count && count<=300000 && packetBytes && packetBytes<=192,@"Bound capture allocation",nil);
     NSError *error=nil;
     NSMutableData *data=[audio ioDataWithCapacity:count*packetBytes error:&error];
     require(data!=nil,@"Allocate ISO data",error);
@@ -45,7 +45,7 @@ static NSData *capture_iso(IOUSBHostInterface *audio, IOUSBHostPipe *iso, NSUInt
         NSTimeInterval deadline=NSDate.timeIntervalSinceReferenceDate+count/1000.0+2;
         BOOL done=NO;
         while(!done && !cancelled && NSDate.timeIntervalSinceReferenceDate<deadline) {
-            done=dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_MSEC))==0;
+            done=dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_MSEC))==0;
             if(!done && !cancelled && pump)pump();
             if(cancelAfter && (NSDate.timeIntervalSinceReferenceDate-began)*1000>=cancelAfter)raise(SIGINT);
         }
@@ -62,6 +62,14 @@ static NSData *capture_iso(IOUSBHostInterface *audio, IOUSBHostPipe *iso, NSUInt
                 [pcm appendBytes:(const uint8_t *)data.bytes+i*packetBytes length:t.completeCount];
         }
         free(transactions);
+        if(count>32000) {
+            NSString *framePath=[output.stringByDeletingPathExtension stringByAppendingString:@".frames.json"];
+            NSData *frameData=[NSJSONSerialization dataWithJSONObject:frames options:0 error:&error];
+            require(frameData && [frameData writeToFile:framePath options:NSDataWritingAtomic error:&error],@"Save detailed ISO frame counters",error);
+            record[@"iso_capture"][@"frame_path"]=framePath;
+            record[@"iso_capture"][@"frame_count"]=@(count);
+            [record[@"iso_capture"] removeObjectForKey:@"frames"];
+        }
         record[@"iso_capture"][@"received_bytes"]=@(pcm.length);
         NSString *raw=[output.stringByDeletingPathExtension stringByAppendingString:@".pcm"];
         require([pcm writeToFile:raw options:NSDataWritingAtomic error:&error],@"Save received ISO data",error);

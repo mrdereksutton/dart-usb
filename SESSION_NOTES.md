@@ -1,3 +1,23 @@
+# Physical audio and application backup checkpoint — 2026-10-20
+
+Five-minute physical BT600 capture passed: 300,000 consecutive 192-byte packets,
+57,600,000 bytes, 48 kHz stereo, no gaps or bad PCM. Device IRQ 48 refills the
+native queue without a Mac EP0 pump. The original IRQ, native request queue,
+stock descriptors/cache, callback, allocation and heap restored. SIGINT cleanup
+also passed. This is generated tone, not iPhone music.
+
+Current and ASUS CU images now pass CRC16/IBM, SHA-256 and RSA-2048 PSS checks.
+The signed OTA table locates the application at CPU 0x02097000, size 0x48000.
+Two complete physical SPI reads at offset 0x97000 matched each other and the
+CPU capture, SHA-256 f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673.
+Both backups and full restoration passed. No flash/efuse writes were made.
+
+Read BT600_SPRINT.md for exact builds, results and reproduction. All 222 offline
+tests pass with libusb loads rejected. The one-worker native transport and both
+legacy pause files remain. Bluetooth receive, storage erase/program/restore,
+persistent boot, and Uconnect acceptance are the remaining work. Hardware work
+remains authorized; do not ask again to resume routine reversible experiments.
+
 # Hardware resumed; resident descriptors passed — 2026-10-19
 
 The owner explicitly resumed hardware work and said to continue. This supersedes

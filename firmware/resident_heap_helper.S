@@ -1,4 +1,7 @@
 /* Allocate/free an explicitly checked pool-5 block for one resident RAM trial. */
+#ifndef RESIDENT_ALLOC_BYTES
+#define RESIDENT_ALLOC_BYTES 4096
+#endif
 .syntax unified
 .thumb
 .text
@@ -20,7 +23,7 @@ dart_resident_heap_helper:
     ldr r0, =0xd47a5210
     str r0, [r5]
     movs r0, #5
-    mov.w r1, #4096
+    movw r1, #RESIDENT_ALLOC_BYTES
     ldr r2, =0x08812424
     movs r3, #0
     ldr r12, =0x00281308

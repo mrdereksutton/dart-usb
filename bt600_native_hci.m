@@ -80,7 +80,10 @@ static NSData *hci(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint16_t 
 
 static uint32_t read_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint32_t address) {
     require(!(address & 3) && ((address >= 0x00200000 && address <= 0x00313ffc) ||
-            (address >= 0x020b9000 && address <= 0x020b9500)), @"Bound known memory address", nil);
+            (address >= 0x020b9000 && address <= 0x020b9500) ||
+            (address >= 0x02046000 && address <= 0x020463fc) ||
+            (address >= 0x02097000 && address <= 0x020973fc) ||
+            address==0x0002018c || address==0xe000ed00 || address==0xe000ed08 || address==0xe000ed14 || address==0x400c0818), @"Bound known memory address", nil);
     uint8_t parameters[] = {0x20, (uint8_t)address, (uint8_t)(address>>8), (uint8_t)(address>>16), (uint8_t)(address>>24)};
     NSData *reply = hci(interface, pipe, 0xfc61, [NSData dataWithBytes:parameters length:5]);
     require(reply.length == 5, @"Memory reply length", nil);
@@ -95,9 +98,11 @@ static uint32_t read_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, ui
 static void write_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint32_t address, uint32_t value) {
     uint32_t allocation=[record[@"allocator_trial"][@"allocation"] unsignedIntValue];
     BOOL resident=record[@"resident_profile"]!=nil;
+    uint32_t allocationBytes=[record[@"allocator_trial"][@"requested_bytes"] unsignedIntValue] ?: 4096;
     require(!(address & 3) && ((address >= 0x00211e30 && address < 0x00211f08) || address == 0x0030d164 ||
-            (resident && ((allocation && address>=allocation && address<allocation+4096) ||
-                          address==0x002c10d8 || address==0x0030cbc8))),
+            (resident && ((allocation && address>=allocation && address<allocation+allocationBytes) ||
+                          address==0x002c10d8 || address==0x0030cbc8 ||
+                          (address==0x00280100 && record[@"resident_profile"][@"irq_entry"])))),
             @"Bound helper RAM write", nil);
     uint8_t parameters[] = {0x20, (uint8_t)address, (uint8_t)(address>>8), (uint8_t)(address>>16), (uint8_t)(address>>24),
         (uint8_t)value, (uint8_t)(value>>8), (uint8_t)(value>>16), (uint8_t)(value>>24)};
@@ -110,6 +115,7 @@ static void write_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, uint3
 
 #include "native_iso_capture.h"
 #include "native_reenumerate.h"
+#include "native_flash_mapping.h"
 
 static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, NSString *root, uint32_t allocation) {
     NSString *folder=[root stringByAppendingPathComponent:@"results/native-host-build/resident"];
@@ -192,90 +198,92 @@ static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe,
 
 #include "native_resident_stream.h"
 #include "native_stream_recovery.h"
+#include "native_resident_stream192.h"
+#include "native_application_read.h"
 
-static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, NSString *root, BOOL resident, void (^runResident)(uint32_t)) {
-    require(read_word(interface,pipe,0x00281308)==0x00018c9b &&
-            read_word(interface,pipe,0x00281310)==0x00018d25 &&
-            (read_word(interface,pipe,0x00280eb8)&255)==5,@"Active native allocator profile",nil);
-    uint32_t freeBytes=read_word(interface,pipe,0x0028199c);
-    require(freeBytes>=4096+8,@"Active heap free bytes",nil);
-    uint32_t block=read_word(interface,pipe,0x0028195c), eligible=0;
+static void allocator_trial(IOUSBHostInterface *__strong *interfaceRef, IOUSBHostPipe *__strong *pipeRef, NSString *root, uint32_t allocationBytes, BOOL resident, void (^runResident)(uint32_t)) {
+    require(read_word(*interfaceRef,*pipeRef,0x00281308)==0x00018c9b &&
+            read_word(*interfaceRef,*pipeRef,0x00281310)==0x00018d25 &&
+            (read_word(*interfaceRef,*pipeRef,0x00280eb8)&255)==5,@"Active native allocator profile",nil);
+    uint32_t freeBytes=read_word(*interfaceRef,*pipeRef,0x0028199c);
+    require(freeBytes>=allocationBytes+8,@"Active heap free bytes",nil);
+    uint32_t block=read_word(*interfaceRef,*pipeRef,0x0028195c), eligible=0;
     for (unsigned count=0;count<32 && block;count++) {
         require(!(block&7) && block>=0x00280000 && block<=0x00313ff8,@"Active heap block bounds",nil);
-        uint32_t next=read_word(interface,pipe,block), header=read_word(interface,pipe,block+4);
+        uint32_t next=read_word(*interfaceRef,*pipeRef,block), header=read_word(*interfaceRef,*pipeRef,block+4);
         require(!(header&0x80000000),@"Active heap block must be free",nil);
-        if ((header&0xfffff)>=4096+8) { eligible=block+8; break; }
+        if ((header&0xfffff)>=allocationBytes+8) { eligible=block+8; break; }
         require(next!=block,@"Active heap list progresses",nil);
         block=next;
     }
     require(eligible!=0,@"Contiguous active heap block",nil);
-    NSData *helper=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:resident ?
+    NSData *helper=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:allocationBytes==6144 ? @"results/native-host-build/stream192/resident-heap-helper192.bin" : resident ?
         @"results/native-host-build/resident/resident-heap-helper.bin" : @"results/native-host-build/heap-trial-helper.bin"]];
     require(helper.length && helper.length<=192 && !(helper.length&3),@"Helper image size",nil);
-    uint32_t callback=read_word(interface,pipe,0x0030d164);
+    uint32_t callback=read_word(*interfaceRef,*pipeRef,0x0030d164);
     require(callback==0x020be8a1,@"Original setup callback",nil);
     NSMutableDictionary *original=[NSMutableDictionary dictionary];
     for (uint32_t at=0x00211e30; at<0x00211e30+helper.length; at+=4) {
-        uint32_t value=read_word(interface,pipe,at);
+        uint32_t value=read_word(*interfaceRef,*pipeRef,at);
         require(value==0,@"Helper scratch is unused",nil);
         original[@(at).stringValue]=@(value);
     }
     for (uint32_t at=0x00211f00; at<=0x00211f04; at+=4) {
-        uint32_t value=read_word(interface,pipe,at);
+        uint32_t value=read_word(*interfaceRef,*pipeRef,at);
         require(value==0,@"Result scratch is unused",nil);
         original[@(at).stringValue]=@(value);
     }
-    record[@"allocator_trial"]=[@{@"pool":@5,@"requested_bytes":@4096,@"free_bytes_before":@(freeBytes),
+    record[@"allocator_trial"]=[@{@"pool":@5,@"requested_bytes":@(allocationBytes),@"free_bytes_before":@(freeBytes),
         @"eligible_allocation":@(eligible),@"original_words":original,
         @"original_callback":@(callback),@"helper_hex":hex(helper),@"restore_required":@YES} mutableCopy];
-    NSData *baseline=control(interface,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
+    NSData *baseline=control(*interfaceRef,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
     BOOL attempted=NO;
     @try {
         const uint8_t *bytes=helper.bytes;
         for (NSUInteger i=0;i<helper.length;i+=4) {
             uint32_t word=bytes[i]|(uint32_t)bytes[i+1]<<8|(uint32_t)bytes[i+2]<<16|(uint32_t)bytes[i+3]<<24;
-            write_word(interface,pipe,0x00211e30+(uint32_t)i,word);
+            write_word(*interfaceRef,*pipeRef,0x00211e30+(uint32_t)i,word);
         }
-        require(read_word(interface,pipe,0x0030d164)==callback,@"Callback still original before installation",nil);
+        require(read_word(*interfaceRef,*pipeRef,0x0030d164)==callback,@"Callback still original before installation",nil);
         require(!cancelled,@"Cancelled before allocator execution",nil);
         cleanupDepth++; /* Finish recording ownership once allocation starts. */
         attempted=YES;
-        write_word(interface,pipe,0x0030d164,0x00211e31);
+        write_word(*interfaceRef,*pipeRef,0x0030d164,0x00211e31);
         checkpoint(@"before allocator helper execution");
-        NSData *observed=control(interface,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
+        NSData *observed=control(*interfaceRef,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
         require([observed isEqual:baseline],@"Stock descriptor through RAM helper",nil);
-        uint32_t marker=read_word(interface,pipe,0x00211f00);
-        uint32_t allocation=read_word(interface,pipe,0x00211f04);
+        uint32_t marker=read_word(*interfaceRef,*pipeRef,0x00211f00);
+        uint32_t allocation=read_word(*interfaceRef,*pipeRef,0x00211f04);
         record[@"allocator_trial"][@"marker"]=@(marker);
         record[@"allocator_trial"][@"allocation"]=@(allocation);
         require(marker==(resident ? 0xd47a5211 : 0xd47a5011),@"Allocator helper completed",nil);
         require(allocation==eligible,@"Allocation from the verified free block",nil);
-        require(read_word(interface,pipe,0x0030d164)==callback,@"Helper restored the callback itself",nil);
+        require(read_word(*interfaceRef,*pipeRef,0x0030d164)==callback,@"Helper restored the callback itself",nil);
         cleanupDepth--;
         if(resident) {
             @try { runResident(allocation); }
             @finally {
                 cleanupDepth++;
                 if(!record[@"resident_profile"] || [record[@"resident_profile"][@"restored"] boolValue]) {
-                    write_word(interface,pipe,0x00211f00,1);
-                    write_word(interface,pipe,0x0030d164,0x00211e31);
-                    control(interface,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
-                    require(read_word(interface,pipe,0x00211f00)==0xd47a5212 &&
-                        read_word(interface,pipe,0x0030d164)==callback &&
-                        read_word(interface,pipe,0x0028199c)==freeBytes,@"Resident allocation freed and heap restored",nil);
+                    write_word(*interfaceRef,*pipeRef,0x00211f00,1);
+                    write_word(*interfaceRef,*pipeRef,0x0030d164,0x00211e31);
+                    control(*interfaceRef,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
+                    require(read_word(*interfaceRef,*pipeRef,0x00211f00)==0xd47a5212 &&
+                        read_word(*interfaceRef,*pipeRef,0x0030d164)==callback &&
+                        read_word(*interfaceRef,*pipeRef,0x0028199c)==freeBytes,@"Resident allocation freed and heap restored",nil);
                     record[@"allocator_trial"][@"allocated_and_freed"]=@YES;
                 }
                 cleanupDepth--;
             }
         }
-        require(read_word(interface,pipe,0x0028199c)==freeBytes,@"Allocated bytes returned to the active heap",nil);
+        require(read_word(*interfaceRef,*pipeRef,0x0028199c)==freeBytes,@"Allocated bytes returned to the active heap",nil);
         record[@"allocator_trial"][@"allocated_and_freed"]=@YES;
     } @finally {
         cleanupDepth++;
         checkpoint(@"restoring original callback before scratch");
-        if (attempted) write_word(interface,pipe,0x0030d164,callback);
-        for (NSString *key in original) write_word(interface,pipe,key.intValue,[original[key] unsignedIntValue]);
-        NSData *restored=control(interface,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
+        if (attempted) write_word(*interfaceRef,*pipeRef,0x0030d164,callback);
+        for (NSString *key in original) write_word(*interfaceRef,*pipeRef,key.intValue,[original[key] unsignedIntValue]);
+        NSData *restored=control(*interfaceRef,0x80,6,0x101,0,[NSMutableData dataWithLength:18]);
         require([restored isEqual:baseline],@"Original descriptor after restoration",nil);
         require(!resident || [record[@"allocator_trial"][@"allocated_and_freed"] boolValue],@"Resident allocation fully released",nil);
         record[@"allocator_trial"][@"restore_required"]=@NO;
@@ -286,25 +294,33 @@ static void allocator_trial(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, 
 }
 
 int main(int argc, const char **argv) { @autoreleasepool {
+    BOOL flashMapRead=argc==4 && strcmp(argv[3],"--flash-map-read")==0;
+    BOOL appRead=argc==4 && strcmp(argv[3],"--application-spi-read")==0;
+    BOOL bootContext=argc==4 && strcmp(argv[3],"--boot-context")==0;
+    BOOL cpuContext=argc==4 && strcmp(argv[3],"--cpu-context")==0;
     BOOL resetContext=argc==4 && strcmp(argv[3],"--reset-context")==0;
     BOOL recovering=argc==5 && strcmp(argv[3],"--recover-stream")==0;
-    BOOL streamTrial=argc==4 && strcmp(argv[3],"--stream-trial")==0;
-    BOOL resident=streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
+    BOOL irqStream=argc==4 && strcmp(argv[3],"--stream-irq")==0;
+    BOOL fullRate=irqStream || (argc==4 && strcmp(argv[3],"--stream-192")==0);
+    BOOL streamTrial=fullRate || (argc==4 && strcmp(argv[3],"--stream-trial")==0);
+    BOOL resident=appRead || streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
     testIsoPolicy=argc==4 && strcmp(argv[3],"--iso-policy")==0;
     BOOL isoIdle=testIsoPolicy || (argc==4 && strcmp(argv[3],"--iso-idle")==0);
     signal(SIGINT,cancel_capture); signal(SIGTERM,cancel_capture);
     BOOL trial=resident || (argc==4 && strcmp(argv[3],"--allocator-trial")==0);
     BOOL heapContext=argc==4 && strcmp(argv[3],"--heap-context")==0;
     BOOL profileContext=argc==4 && strcmp(argv[3],"--profile-context")==0;
-    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--iso-idle|--iso-policy|--heap-context|--profile-context]\n"); return 2; }
+    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext && !cpuContext && !bootContext && !flashMapRead) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--stream-192|--stream-irq|--iso-idle|--iso-policy|--heap-context|--profile-context|--reset-context|--cpu-context|--boot-context|--flash-map-read|--application-spi-read|--recover-stream PRIOR.json]\n"); return 2; }
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     output = [NSString stringWithUTF8String:argv[2]];
     NSDictionary *approval = [NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"results/hardware-resume.json"]]
         options:0 error:nil];
     if (![approval[@"user_authorized_hardware"] boolValue] ||
-        ![approval[@"operations"] containsObject:(resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
+        ![approval[@"operations"] containsObject:((bootContext || flashMapRead || appRead) ? @"native_boot_read" : resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
             trial ? @"native_allocator_trial" : @"native_hci_read")]) return 3;
+    if(fullRate && ![approval[@"operations"] containsObject:@"native_reenumeration"])return 3;
+    if(irqStream && ![approval[@"operations"] containsObject:@"native_irq_stream"])return 3;
     int lease=open("/private/tmp/fauxpod-bt600-native.lock",O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0600);
     if(lease<0 || flock(lease,LOCK_EX|LOCK_NB)) {
         if(lease>=0)close(lease);
@@ -313,9 +329,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     }
     ftruncate(lease,0); dprintf(lease,"%d\n",getpid());
     record = [@{@"pid": @(getpid()), @"transport": @"IOUSBHost direct interrupt pipe 0x81",
-        @"persistent_writes": @NO, @"ram_writes": @(trial || recovering),
+        @"persistent_writes": @NO, @"ram_writes": @(trial || recovering || flashMapRead),
         @"commands": [NSMutableArray array], @"reads": [NSMutableArray array],@"writes":[NSMutableArray array]} mutableCopy];
-    IOUSBHostDevice *device = nil; IOUSBHostInterface *interface = nil; IOUSBHostPipe *pipe = nil;
+    __block IOUSBHostDevice *device = nil; __block IOUSBHostInterface *interface = nil; __block IOUSBHostPipe *pipe = nil;
     int original = -1; BOOL changed = NO, success = NO;
     io_service_t service = 0; io_iterator_t iterator = 0;
     @try {
@@ -384,6 +400,21 @@ int main(int argc, const char **argv) { @autoreleasepool {
         require((callback&1) && callback>=0x02000000 && callback<0x02200000,@"Setup entry bounds",nil);
         record[@"runtime"]=@(runtime); record[@"composite"]=@(composite);
         record[@"driver"]=@(driver); record[@"setup_callback"]=@(callback);
+        if(flashMapRead) {quiet=YES;flash_mapping_read(interface,pipe,root);quiet=NO;}
+        if(bootContext) {
+            quiet=YES;
+            for(uint32_t base=0x02046000;base<=0x02097000;base+=0x51000) {
+                for(uint32_t at=base+0x110;at<base+0x180;at+=4)read_word(interface,pipe,at);
+                read_word(interface,pipe,base+0x2a0);
+            }
+            quiet=NO;checkpoint(@"live boot headers read");
+        }
+        if(cpuContext) {
+            for(uint32_t i=0;i<4;i++) {
+                const uint32_t addresses[]={0xe000ed00,0xe000ed08,0xe000ed14,0x400c0818};
+                read_word(interface,pipe,addresses[i]);
+            }
+        }
         if (profileContext) {
             quiet=YES;
             const uint32_t words[]={0x00281308,0x002812b0,0x002812b4,0x002c10d8,
@@ -423,8 +454,10 @@ int main(int argc, const char **argv) { @autoreleasepool {
             iso_idle(device,configuration); record[@"iso_warmup"]=record[@"iso_capture"];
             [record removeObjectForKey:@"iso_capture"];
         }
-        if (trial) { quiet=YES; allocator_trial(interface,pipe,root,resident,^(uint32_t allocation) {
-            if(streamTrial)resident_stream(device,interface,pipe,root,allocation);
+        if (trial) { quiet=YES; allocator_trial(&interface,&pipe,root,fullRate ? 6144 : 4096,resident,^(uint32_t allocation) {
+            if(appRead)application_spi_read(interface,pipe,root,allocation);
+            else if(fullRate)resident_stream192(&device,&interface,&pipe,root,allocation,irqStream);
+            else if(streamTrial)resident_stream(device,interface,pipe,root,allocation);
             else resident_profile(interface,pipe,root,allocation);
         }); quiet=NO; }
         if(resetContext) {

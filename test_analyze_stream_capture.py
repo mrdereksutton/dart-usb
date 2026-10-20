@@ -31,9 +31,37 @@ class CaptureAnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             p,_,r=self.fixture(folder);r['allocator_trial']['restored']=False;p.write_text(json.dumps(r))
             self.assertFalse(analyze(p,False)['passed'])
+    def test_separate_frame_counters_are_loaded_and_counted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p,_,r=self.fixture(folder);capture=r['iso_capture']
+            frames=p.with_suffix('.frames.json');frames.write_text(json.dumps(capture.pop('frames')))
+            capture.update(frame_path=str(frames),frame_count=3);p.write_text(json.dumps(r))
+            self.assertTrue(analyze(p,False)['passed'])
+            capture['frame_count']=4;p.write_text(json.dumps(r))
+            self.assertFalse(analyze(p,False)['passed'])
+    def test_irq_capture_requires_interrupt_and_native_queue_restoration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p,_,r=self.fixture(folder);capture=r['iso_capture'];capture['host_refill_required']=False
+            for interrupt,drained in ((False,True),(True,False),(True,True)):
+                capture.update(interrupt_restored=interrupt,native_drain_verified=drained);p.write_text(json.dumps(r))
+                analysis=analyze(p,False)
+                self.assertEqual(analysis['passed'],interrupt and drained)
+                self.assertIn('device USB interrupt',analysis['source'])
+    def test_transfer_completion_error_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p,_,r=self.fixture(folder);r['iso_capture']['completion_status']=-1;p.write_text(json.dumps(r))
+            self.assertFalse(analyze(p,False)['passed'])
     def test_low_amplitude_counter_version_is_decoded(self):
         with tempfile.TemporaryDirectory() as folder:
             p,raw,r=self.fixture(folder);r['iso_capture']['format_version']=2
             raw.write_bytes(b''.join(struct.pack('<16h',s-128,-128,*((1024,)*6+(-1024,)*8))+bytes(31) for s in range(3)))
             p.write_text(json.dumps(r));self.assertTrue(analyze(p,False)['passed'])
+    def test_stereo_full_rate_pcm_is_checked_through_the_last_sample(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p,raw,r=self.fixture(folder);a=r['iso_capture'];a.update(format_version=3,packet_bytes=192,sample_rate=48000,channels=2)
+            a['frames']=[{'status':0,'bytes':192} for _ in range(3)]
+            raw.write_bytes(b''.join(struct.pack('<96h',s-128,-128,*((1024,)*46+(-1024,)*48)) for s in range(3)))
+            p.write_text(json.dumps(r));self.assertTrue(analyze(p,False)['passed'])
+            damaged=bytearray(raw.read_bytes());damaged[191]^=1;raw.write_bytes(damaged)
+            self.assertFalse(analyze(p,False)['passed'])
 if __name__=='__main__':unittest.main()

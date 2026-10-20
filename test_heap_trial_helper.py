@@ -31,6 +31,10 @@ class HeapTrialHelperTests(unittest.TestCase):
                 str(Path(__file__).parent / "firmware/resident_heap_helper.S"), "-o", str(obj),
             ], check=True)
             cls.resident_code = elf_text(obj.read_bytes())
+            subprocess.run(["xcrun","clang","-target","armv8m.main-none-eabi","-mcpu=cortex-m33+nodsp",
+                "-mthumb","-DRESIDENT_ALLOC_BYTES=6144","-c",
+                str(Path(__file__).parent/"firmware/resident_heap_helper.S"),"-o",str(obj)],check=True)
+            cls.resident6_code=elf_text(obj.read_bytes())
 
     def execute(self, allocation=0x00312280, marker=0, descriptor=True):
         machine = uc.Uc(uc.UC_ARCH_ARM, uc.UC_MODE_THUMB | uc.UC_MODE_MCLASS)
@@ -101,7 +105,7 @@ class HeapTrialHelperTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(result, (0, 0))
 
-    def test_actual_native_allocator_retains_then_releases_the_block(self):
+    def native_retain_release(self,code,allocation_bytes):
         import native_usb_offline as native
         import hashlib
         root = Path(__file__).parent
@@ -117,7 +121,7 @@ class HeapTrialHelperTests(unittest.TestCase):
             machine.mem_map(base, size)
         for base, data in ((0x1000, rom_path.read_bytes()), (0x200000, ram), (0x2000000, flash)):
             machine.mem_write(base, data)
-        machine.mem_write(0x211e30, self.resident_code)
+        machine.mem_write(0x211e30, code)
         machine.mem_write(0x211f00, bytes(8))
         machine.mem_write(0x500100, bytes.fromhex("80 06 01 01 00 00 12 00"))
 
@@ -143,14 +147,19 @@ class HeapTrialHelperTests(unittest.TestCase):
         before = word(0x28199c)
         execute()
         self.assertEqual((word(0x211f00), word(0x211f04)), (0xd47a5211, 0x312280))
-        self.assertEqual(word(0x28199c), before - 4104)
-        self.assertEqual(bytes(machine.mem_read(0x312280, 4096)), bytes(4096))
+        self.assertEqual(word(0x28199c), before - (allocation_bytes+8))
+        self.assertEqual(bytes(machine.mem_read(0x312280, allocation_bytes)), bytes(allocation_bytes))
         machine.mem_write(0x211f00, struct.pack("<I", 1))
         execute()
         self.assertEqual((word(0x211f00), word(0x211f04)), (0xd47a5212, 0x312280))
         self.assertEqual(word(0x28199c), before)
         self.assertEqual(word(0x30d164), 0x20be8a1)
 
+    def test_actual_native_allocator_retains_then_releases_the_block(self):
+        self.native_retain_release(self.resident_code,4096)
+
+    def test_actual_native_allocator_retains_then_releases_six_kib(self):
+        self.native_retain_release(self.resident6_code,6144)
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,11 +7,18 @@ outside the current experiment. Neither legacy pause file was removed.
 
 ## Latest physical audio result
 
-The approved two-hour sprint has now captured **32 seconds of physical BT600 USB
-PCM**, with 32,000 consecutive packets, zero transfer errors and verified native
-queue/heap/callback/configuration restoration. SIGINT cancellation also drained and
-restored correctly. See [BT600_SPRINT.md](BT600_SPRINT.md) for exact artifacts,
-compiler compatibility fixes and the remaining receiver/persistent-boot blockers.
+The sprint captured **five minutes of physical BT600 USB PCM at 48 kHz stereo**:
+300,000 consecutive packets, 57,600,000 bytes, every PCM sample correct. A chained
+device USB interrupt refills the queue without a Mac control pump. Normal finish
+and SIGINT restore native requests, the interrupt vector, descriptor/cache,
+callback, allocation, scratch and heap. All 222 offline tests pass with no skips.
+
+The October 20 continuation also obtained **two matching physical SPI copies of
+the entire 294,912-byte application partition**, verified against the CPU capture.
+All seven current images and seven ASUS ECO-2 images pass CRC/SHA/RSA validation.
+See [BT600_SPRINT.md](BT600_SPRINT.md) for the saved audio, build hashes, backup
+files and reproducible commands. Bluetooth receive, persistent startup and the
+Uconnect acceptance session remain unfinished. No persistent writes were made.
 
 ## What passed on the dongle
 
@@ -94,6 +101,6 @@ original values before writes. Never free resident code until its native request
 has drained. A lost USB transport can prevent restoration; power cycling clears
 these RAM-only changes. Normal successful runs restore everything automatically.
 
-Next: extend the measured stream to the normal audio profile, connect native
-periodic service and resolve the receiver and persistent application loader. Use
+Next: integrate the measured stream with the complete USB personality, resolve
+Bluetooth reception, and verify storage restoration and persistent startup. Use
 [UCONNECT_TARGET.md](UCONNECT_TARGET.md) for the car-facing acceptance target.

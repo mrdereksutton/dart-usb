@@ -1,3 +1,11 @@
+# Latest measured state — 2026-10-20
+
+Five minutes of 48 kHz stereo USB PCM now pass with device-side IRQ refill,
+zero missing packets/bad samples, and verified restoration. Two complete native
+SPI reads preserve the actual application partition, and image CRC/SHA/RSA checks
+pass. Read BT600_SPRINT.md before following older next-step notes below. Bluetooth
+receive, verified flash restoration and persistent startup remain unfinished.
+
 # Dart USB handoff
 
 ## Hardware resumed by the owner — 2026-10-19
