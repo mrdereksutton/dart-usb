@@ -83,7 +83,8 @@ static uint32_t read_word(IOUSBHostInterface *interface, IOUSBHostPipe *pipe, ui
             (address >= 0x020b9000 && address <= 0x020b9500) ||
             (address >= 0x02046000 && address <= 0x020463fc) ||
             (address >= 0x02097000 && address <= 0x020973fc) ||
-            address==0x0002018c || address==0xe000ed00 || address==0xe000ed08 || address==0xe000ed14 || address==0x400c0818), @"Bound known memory address", nil);
+            address==0x0002018c || address==0x00020190 || address==0x00020198 ||
+            address==0xe000ed00 || address==0xe000ed08 || address==0xe000ed14 || address==0x400c0818), @"Bound known memory address", nil);
     uint8_t parameters[] = {0x20, (uint8_t)address, (uint8_t)(address>>8), (uint8_t)(address>>16), (uint8_t)(address>>24)};
     NSData *reply = hci(interface, pipe, 0xfc61, [NSData dataWithBytes:parameters length:5]);
     require(reply.length == 5, @"Memory reply length", nil);
@@ -200,6 +201,7 @@ static void resident_profile(IOUSBHostInterface *interface, IOUSBHostPipe *pipe,
 #include "native_stream_recovery.h"
 #include "native_resident_stream192.h"
 #include "native_application_read.h"
+#include "native_flash_restore.h"
 
 static void allocator_trial(IOUSBHostInterface *__strong *interfaceRef, IOUSBHostPipe *__strong *pipeRef, NSString *root, uint32_t allocationBytes, BOOL resident, void (^runResident)(uint32_t)) {
     require(read_word(*interfaceRef,*pipeRef,0x00281308)==0x00018c9b &&
@@ -296,6 +298,8 @@ static void allocator_trial(IOUSBHostInterface *__strong *interfaceRef, IOUSBHos
 int main(int argc, const char **argv) { @autoreleasepool {
     BOOL flashMapRead=argc==4 && strcmp(argv[3],"--flash-map-read")==0;
     BOOL appRead=argc==4 && strcmp(argv[3],"--application-spi-read")==0;
+    BOOL restoreTrial=argc==4 && strcmp(argv[3],"--flash-restore-trial")==0;
+    BOOL flashStatus=argc==4 && strcmp(argv[3],"--flash-status")==0;
     BOOL bootContext=argc==4 && strcmp(argv[3],"--boot-context")==0;
     BOOL cpuContext=argc==4 && strcmp(argv[3],"--cpu-context")==0;
     BOOL resetContext=argc==4 && strcmp(argv[3],"--reset-context")==0;
@@ -303,21 +307,21 @@ int main(int argc, const char **argv) { @autoreleasepool {
     BOOL irqStream=argc==4 && strcmp(argv[3],"--stream-irq")==0;
     BOOL fullRate=irqStream || (argc==4 && strcmp(argv[3],"--stream-192")==0);
     BOOL streamTrial=fullRate || (argc==4 && strcmp(argv[3],"--stream-trial")==0);
-    BOOL resident=appRead || streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
+    BOOL resident=restoreTrial || flashStatus || appRead || streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
     testIsoPolicy=argc==4 && strcmp(argv[3],"--iso-policy")==0;
     BOOL isoIdle=testIsoPolicy || (argc==4 && strcmp(argv[3],"--iso-idle")==0);
     signal(SIGINT,cancel_capture); signal(SIGTERM,cancel_capture);
     BOOL trial=resident || (argc==4 && strcmp(argv[3],"--allocator-trial")==0);
     BOOL heapContext=argc==4 && strcmp(argv[3],"--heap-context")==0;
     BOOL profileContext=argc==4 && strcmp(argv[3],"--profile-context")==0;
-    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext && !cpuContext && !bootContext && !flashMapRead) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--stream-192|--stream-irq|--iso-idle|--iso-policy|--heap-context|--profile-context|--reset-context|--cpu-context|--boot-context|--flash-map-read|--application-spi-read|--recover-stream PRIOR.json]\n"); return 2; }
+    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext && !cpuContext && !bootContext && !flashMapRead) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--stream-192|--stream-irq|--iso-idle|--iso-policy|--heap-context|--profile-context|--reset-context|--cpu-context|--boot-context|--flash-map-read|--application-spi-read|--flash-status|--flash-restore-trial|--recover-stream PRIOR.json]\n"); return 2; }
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     output = [NSString stringWithUTF8String:argv[2]];
     NSDictionary *approval = [NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"results/hardware-resume.json"]]
         options:0 error:nil];
     if (![approval[@"user_authorized_hardware"] boolValue] ||
-        ![approval[@"operations"] containsObject:((bootContext || flashMapRead || appRead) ? @"native_boot_read" : resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
+        ![approval[@"operations"] containsObject:(restoreTrial ? @"native_flash_restore_trial" : (bootContext || flashMapRead || flashStatus || appRead) ? @"native_boot_read" : resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
             trial ? @"native_allocator_trial" : @"native_hci_read")]) return 3;
     if(fullRate && ![approval[@"operations"] containsObject:@"native_reenumeration"])return 3;
     if(irqStream && ![approval[@"operations"] containsObject:@"native_irq_stream"])return 3;
@@ -329,7 +333,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     }
     ftruncate(lease,0); dprintf(lease,"%d\n",getpid());
     record = [@{@"pid": @(getpid()), @"transport": @"IOUSBHost direct interrupt pipe 0x81",
-        @"persistent_writes": @NO, @"ram_writes": @(trial || recovering || flashMapRead),
+        @"persistent_writes": @(restoreTrial), @"ram_writes": @(trial || recovering || flashMapRead),
         @"commands": [NSMutableArray array], @"reads": [NSMutableArray array],@"writes":[NSMutableArray array]} mutableCopy];
     __block IOUSBHostDevice *device = nil; __block IOUSBHostInterface *interface = nil; __block IOUSBHostPipe *pipe = nil;
     int original = -1; BOOL changed = NO, success = NO;
@@ -455,7 +459,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
             [record removeObjectForKey:@"iso_capture"];
         }
         if (trial) { quiet=YES; allocator_trial(&interface,&pipe,root,fullRate ? 6144 : 4096,resident,^(uint32_t allocation) {
-            if(appRead)application_spi_read(interface,pipe,root,allocation);
+            if(restoreTrial || flashStatus)flash_restore_trial(interface,pipe,root,allocation,flashStatus);
+            else if(appRead)application_spi_read(interface,pipe,root,allocation);
             else if(fullRate)resident_stream192(&device,&interface,&pipe,root,allocation,irqStream);
             else if(streamTrial)resident_stream(device,interface,pipe,root,allocation);
             else resident_profile(interface,pipe,root,allocation);

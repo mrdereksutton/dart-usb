@@ -4,12 +4,13 @@ from pathlib import Path
 from arm_object_loader import load_arm_objects
 ROOT=Path(__file__).resolve().parent
 
-def build(directory,base=0x312280):
+def build(directory,base=0x312280,restore_trial=False):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
     obj=directory/'resident_flash_read.o'
     source=ROOT/'firmware/resident_flash_read.c'
     subprocess.run(['xcrun','clang','-target','armv8m.main-none-eabi','-mcpu=cortex-m33+nodsp',
         '-mthumb','-mno-unaligned-access','-ffreestanding','-fno-builtin','-fno-stack-protector','-Os','-Wall','-Wextra','-Werror',
+        *(['-DDART_FLASH_RESTORE_TRIAL=1'] if restore_trial else []),
         '-I',str(ROOT/'firmware'),'-c',str(source),'-o',str(obj)],check=True,capture_output=True)
     class Memory:
         def mem_map(self,address,size):
@@ -23,10 +24,12 @@ def build(directory,base=0x312280):
         sha256=hashlib.sha256(data).hexdigest(),symbols=symbols,arm_image=layout,
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         compiler_target='ARMv8-M Mainline; no DSP; no unaligned accesses',source_address=0x02097000,partition_bytes=0x48000,page_bytes=512,pages=576)
+    manifest['allows_flash_restore_trial']=restore_trial
+    if restore_trial:manifest.update(trial_cpu_address=0x020de000,trial_sector_bytes=4096,trial_pattern=bytes(range(0x20,0x40)).hex(' '))
     (directory/'resident-flash-read.bin').write_bytes(data)
     (directory/'resident-flash-read.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest,[obj]
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,default=ROOT/'results/native-host-build/flash-read')
-    p.add_argument('--base',type=lambda s:int(s,0),default=0x312280);a=p.parse_args()
-    m,_=build(a.output,a.base);print(json.dumps({k:m[k] for k in ('base','upload_bytes','sha256','symbols')},indent=2))
+    p.add_argument('--base',type=lambda s:int(s,0),default=0x312280);p.add_argument('--restore-trial',action='store_true');a=p.parse_args()
+    m,_=build(a.output,a.base,a.restore_trial);print(json.dumps({k:m[k] for k in ('base','upload_bytes','sha256','symbols')},indent=2))

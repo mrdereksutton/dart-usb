@@ -23,6 +23,12 @@ dart_flash_map_read_helper:
     cmp r0, r1
     bne finished
 read_header:
+    mrs r3, ipsr
+    str r3, [r5, #-8]
+    mrs r3, primask
+    str r3, [r5, #-16]
+    mrs r3, basepri
+    str r3, [r5, #-12]
     ldr r1, =0x00211ec0
     movs r2, #16
     ldr r3, =0x0000cbb5

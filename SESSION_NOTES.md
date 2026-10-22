@@ -1,3 +1,29 @@
+# Receiver and storage checkpoint — 2026-10-22
+
+The signed SDK 2M upper stack matches the CU ROM UUID and fits the blank window
+0x02015000..0x02045b57 with 1,192 bytes before the active OTA header. Its actual
+initializer copies 404 data bytes and clears 2,844 BSS bytes in isolated ARM
+replay. Physical backup of that window and ownership of its RAM remain pending.
+
+The first bounded 32-byte padding program returned completion but changed no
+bytes. Padding cleanup, callbacks and heap restored. Two full post-trial native
+SPI application reads match the original SHA-256 f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673,
+with 1,152 completions and zero errors. A read-only query measured SR1=0x34,
+SR2=0x02 and BP level 5, explaining protection over the target address.
+
+The updated diagnostic uses the native volatile BP setter around the existing
+locked storage APIs and restores BP=5 before returning. Actual ROM replay and
+failure-path tests pass; this revision has not run on hardware. Full suite:
+230 tests, zero failures/errors/skips, libusb loads forbidden. Native host build
+passes warnings as errors. Read RECEIVER_PORT.md, BT600_SPRINT.md and the compact
+evidence/bt600-checkpoint-20261022.json. Raw reports and executed images remain in
+results/receiver-references-20261020/. No worker is intentionally left running.
+
+Next: physical fixed-padding program/readback/restore with original protection,
+then candidate-window backup and RAM ownership before Bluetooth integration.
+The five-minute USB tone milestone remains complete; iPhone/Uconnect playback
+and two standalone cold starts remain unfinished.
+
 # Physical audio and application backup checkpoint — 2026-10-20
 
 Five-minute physical BT600 capture passed: 300,000 consecutive 192-byte packets,

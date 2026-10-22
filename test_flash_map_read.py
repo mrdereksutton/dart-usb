@@ -42,6 +42,7 @@ class FlashMapReadTests(unittest.TestCase):
                 m.emu_start(0x211e31,CALLBACK,count=200)
                 self.assertEqual([m.reg_read(getattr(regs,f'UC_ARM_REG_R{i}')) for i in range(13)],before)
                 self.assertEqual(calls,[[source,0x211ec0,16]])
+                self.assertEqual(bytes(m.mem_read(0x211ef8,4)),bytes(4))
                 self.assertEqual(bytes(m.mem_read(0x211f00,8)),struct.pack('<II',0xd47a6001,0x18))
     def test_other_requests_and_unlisted_sources_cannot_call_flash(self):
         for setup,source in ((bytes.fromhex('20 00 00 00 00 00 00 00'),0x2097110),

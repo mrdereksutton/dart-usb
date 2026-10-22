@@ -3,6 +3,25 @@
 Started 12:44:24 UTC; dependency checkpoint 13:04:24 UTC; deadline 14:44:24 UTC.
 The owner authorized live hardware work and the conditional fallback in this sprint.
 
+## Continuation checkpoint — 2026-10-22
+
+The five-minute physical stereo result below is complete. Receiver analysis now
+identifies a signed SDK 2M stack with the matching ROM UUID and a layout that fits
+before the current OTA header. Its real initializer passes isolated ARM replay.
+Read [RECEIVER_PORT.md](RECEIVER_PORT.md) for placement, RAM ownership and linkage.
+
+The first fixed-padding storage trial returned native completion but changed no
+bytes. All padding remained FF; two full post-trial application copies match the
+original hash. Read-only status measured SR1=0x34, SR2=0x02 and BP=5, explaining
+the protected target. The revised temporary-protection path passes offline checks
+and has not been run physically. Physical write/readback/restore, Bluetooth
+reception, persistent startup and Uconnect acceptance remain unfinished.
+
+All 230 current offline tests pass with zero skips and libusb loading forbidden.
+The native host compiles with warnings as errors. Compact shareable results and
+hashes are in [evidence/bt600-checkpoint-20261022.json](evidence/bt600-checkpoint-20261022.json);
+the full raw captures remain local.
+
 ## Dependency decision at minute 20
 
 Standalone iPhone → BT600 → Uconnect playback cannot be completed in this two-hour
@@ -104,8 +123,10 @@ allocation and heap restored. The application maps to physical SPI offset
 `boot-analysis/original-app-partition.spi.bin`. Report:
 `results/sprint-20261019/native-application-spi-final.json`.
 
-Erase/program/restore, boot trust policy and custom startup integration remain. No persistent write, efuse change or full
-ASUS upgrade was performed. The physical application backup is verified; storage restoration has not been tested.
+Erase/program/restore, boot trust policy and custom startup integration remain.
+These backup runs used read-only storage access. The later fixed-padding trial
+and its protection diagnosis are recorded in the continuation checkpoint above.
+No efuse change or full ASUS upgrade was performed.
 
 Reproduce entirely offline:
 
@@ -172,7 +193,7 @@ remained 7624 bytes (`native-reset-context-forced-config.json`). The full-rate s
 
 ## Regression checks
 
-All 222 offline tests pass with zero skips and an audit hook that rejects libusb
+All 230 current offline tests pass with zero skips and an audit hook that rejects libusb
 library loading. Native compilation uses warnings as errors.
 
 ## Reproduce the bounded capture

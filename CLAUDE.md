@@ -1,10 +1,14 @@
-# Latest measured state — 2026-10-20
+# Latest measured state — 2026-10-22
 
 Five minutes of 48 kHz stereo USB PCM now pass with device-side IRQ refill,
 zero missing packets/bad samples, and verified restoration. Two complete native
 SPI reads preserve the actual application partition, and image CRC/SHA/RSA checks
-pass. Read BT600_SPRINT.md before following older next-step notes below. Bluetooth
-receive, verified flash restoration and persistent startup remain unfinished.
+pass. The first bounded padding write returned completion but changed no bytes;
+read-only status found SR1=0x34/SR2=0x02/BP=5. Two post-trial full application
+reads still match the original. The temporary-unlock revision passes offline
+checks but has not run physically. Read BT600_SPRINT.md and RECEIVER_PORT.md before
+older next-step notes below. All 230 offline tests pass. Bluetooth receive,
+physical flash restoration and persistent startup remain unfinished.
 
 # Dart USB handoff
 

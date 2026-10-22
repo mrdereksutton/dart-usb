@@ -31,9 +31,12 @@ static void flash_mapping_read(IOUSBHostInterface *interface, IOUSBHostPipe *pip
             require(read_word(interface,pipe,0x0030d164)==0x020be8a1 &&
                 read_word(interface,pipe,0x00211f00)==0xd47a6001,@"SPI-read helper completed and unhooked",nil);
             uint32_t status=read_word(interface,pipe,0x00211f04);NSMutableData *received=[NSMutableData data];
+            uint32_t ipsr=read_word(interface,pipe,0x00211ef8);
+            uint32_t primask=read_word(interface,pipe,0x00211ef0),basepri=read_word(interface,pipe,0x00211ef4);
             for(uint32_t at=0x00211ec0;at<0x00211ed0;at+=4) {uint32_t value=read_word(interface,pipe,at);[received appendBytes:&value length:4];}
             [checks addObject:@{@"cpu_address":@(source),@"spi_offset":@(source-0x02000000),@"status":@(status),
-                @"expected":hex(expected),@"received":hex(received),@"matches":@([expected isEqual:received])}];
+                @"expected":hex(expected),@"received":hex(received),@"setup_ipsr":@(ipsr),
+                @"setup_primask":@(primask),@"setup_basepri":@(basepri),@"matches":@([expected isEqual:received])}];
             checkpoint(@"native SPI header compared");
             require(status==0x18 && [expected isEqual:received],@"Native SPI bytes match CPU header",nil);
         }

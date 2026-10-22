@@ -1,0 +1,107 @@
+{
+  "checkpoint_date": "2026-10-22",
+  "status": "partial progress; standalone playback unfinished",
+  "acceptance": {
+    "iphone_music": false,
+    "uconnect_playback": false,
+    "two_cold_starts": false
+  },
+  "usb_test_audio": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 300,
+    "packets": 300000,
+    "received_bytes": 57600000,
+    "missing_packets": 0,
+    "bad_pcm_packets": 0,
+    "device_irq_refill": true,
+    "restoration_verified": true,
+    "source": "generated tone",
+    "raw_sha256": "bd1d1ee643774562a926a540cfe2f9c9a2ddf845e4b7d64067abf12d15da865e",
+    "ram_image_sha256": "311fd66e8eb91a963cc08c59e1dcccf13cf459af0652166d94bd90d98a36d349"
+  },
+  "application_partition": {
+    "cpu_address": "0x02097000",
+    "spi_offset": "0x97000",
+    "bytes": 294912,
+    "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
+  },
+  "physical_padding_trial": {
+    "cpu_address": "0x020de000",
+    "sector_bytes": 4096,
+    "requested_program_bytes": 32,
+    "native_program_status": 24,
+    "native_erase_status": 24,
+    "observed_changed_bytes": 0,
+    "pattern_verified": false,
+    "original_sector_verified_after_cleanup": true,
+    "before_sha256": "f47a8ec3e9aff2318d896942282ad4fe37d6391c82914f54a5da8a37de1300c6",
+    "after_sha256": "f47a8ec3e9aff2318d896942282ad4fe37d6391c82914f54a5da8a37de1300c6",
+    "callback_restored": true,
+    "allocator_restored": true
+  },
+  "physical_read_only_status": {
+    "sr1": 52,
+    "sr2": 2,
+    "bp_level": 5,
+    "status_result": 24,
+    "read_errors": 0,
+    "read_completions": 16
+  },
+  "post_trial_application": {
+    "success": true,
+    "copies": [
+      {
+        "bytes": 294912,
+        "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
+      },
+      {
+        "bytes": 294912,
+        "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
+      }
+    ],
+    "native_completions": 1152,
+    "native_errors": 0,
+    "restored": true
+  },
+  "receiver_candidate": {
+    "reference_commit": "ae842d07494ac53cf966e34684804baeed86676e",
+    "package_sha256": "4445b1ebe9a4a751425b95d2b3f42ad15f8764ac06966d16bf3865bf846d5c8e",
+    "image_bytes": 199512,
+    "rom_uuid_match": true,
+    "signature_verified": true,
+    "rsa_pss_salt_bytes": 222,
+    "fits_before_ota_header": true,
+    "bytes_before_ota_header": 1192,
+    "startup": {
+      "entry": 33641473,
+      "data_source": 33839556,
+      "data_destination": 2651136,
+      "data_bytes": 404,
+      "bss_destination": 2651540,
+      "bss_bytes": 2844,
+      "ram_end": 2654384
+    },
+    "loaded_on_hardware": false
+  },
+  "pending_temporary_protection_revision": {
+    "offline_tests_passed": true,
+    "hardware_tested": false,
+    "flash_installation_performed": false,
+    "volatile_status_enable_opcode": "0x50",
+    "expected_sr1_before_and_after": "0x34",
+    "expected_sr2_before_and_after": "0x02"
+  },
+  "validation": {
+    "run": 230,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "libusb_loading_forbidden": true,
+    "source": "staged repository tree; local drafts excluded",
+    "native_host_warnings_as_errors": true,
+    "offline_stock_inspection": true
+  },
+  "local_evidence_directory": "results/receiver-references-20261020",
+  "raw_captures_committed": false
+}
