@@ -2,8 +2,8 @@
 
 The complete local suite passes 230 tests with zero failures/errors/skips and
 libusb loads forbidden. The native host compiles with warnings as errors. The
-temporary-protection revision below has passed offline checks only; its physical
-program/readback/restore test is the next storage step.
+temporary-protection revision below has now passed the physical fixed-padding
+program/readback/erase/restore test. Startup after power removal is pending.
 
 The official SDK contains executable AVDTP/A2DP objects, not only declarations.
 Pinned references and SHA-256 records are in `results/receiver-references-20261020/`.
@@ -74,8 +74,22 @@ selected **0x50 volatile-status enable**, changed only SR1 from 0x34 to 0x20 and
 back, preserved SR2=0x02, wrote only the fixed 32 bytes and restored the sector.
 The target checks the boot flag at 0x2803a1 and the geometry's 0x50 opcode before
 changing protection, rejecting the nonvolatile-enable configuration. Program-error
-tests also verify restoration of BP=5. This revision has not run on hardware.
-Do not load a stack or alter startup until physical write/readback/restore passes.
+tests also verify restoration of BP=5.
+
+**Physical result:** `results/repo-checkpoint-20261022/native-flash-restore-volatile.json`
+reports success. All 32 programmed bytes match the fixed pattern, and all other
+sector bytes stayed FF. After erase, every one of the 4,096 bytes matches the
+original. SR1=0x34/SR2=0x02 were restored after both operations. Native reads:
+24 completions, zero errors. Callback, EP0, selector, scratch and heap restored.
+The 1,868-byte executed RAM image has SHA-256
+`2960be154aa98b32f9089bfb09cbc4bbc0770e028bb46af6c087b7290df29671`.
+Its exact build is preserved in `verified-storage-build/` beside the report.
+
+`native-application-after-volatile.json` records two further complete raw SPI
+application copies, both retaining the original partition SHA-256, with 1,152
+completions and zero errors. No receiver image or startup hook has been installed.
+Verify startup after physical power removal, back up the candidate storage window
+and resolve its RAM ownership before loading the stack.
 
 `--flash-status` only reads status and padding; `--flash-restore-trial` enables the
 fixed program/erase sequence and requires its separate local operation scope.

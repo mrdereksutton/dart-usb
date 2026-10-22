@@ -19,12 +19,12 @@ Bluetooth music reception, persistent startup and playback in the car remain unf
 | Application backup | Two complete native SPI copies of the 294,912-byte application match the preserved CPU capture |
 | Image validation | Captured CU images pass CRC16, SHA-256 and RSA-PSS checks; parser also handles the SDK stack's 222-byte PSS salt |
 | Receiver candidate | The SDK 2M stack fits the blank address window and matches the CU ROM UUID; its initializer passes isolated ARM replay |
-| Storage trial | The first fixed-padding program returned completion but changed no bytes; live status reads show protection over that address |
-| Post-trial verification | All padding bytes and two new full application copies match the originals; callbacks and heap restored |
+| Storage restoration | The fixed 32-byte padding pattern was physically programmed and verified, then the complete 4 KiB sector and original protection bits were restored |
+| Post-trial verification | Both further full application copies match the original; callbacks, EP0, scratch and heap restored |
 
 The USB capture contains generated test audio. End-to-end iPhone music and the
-required two cold starts are pending. The new temporary-unlock path passes offline
-checks and has **not been executed on hardware**.
+required two cold starts are pending. The native temporary-unlock and restoration
+path has now passed on the physical BT600.
 
 Read [BT600_SPRINT.md](BT600_SPRINT.md) for the physical stream and backup results,
 [RECEIVER_PORT.md](RECEIVER_PORT.md) for the receiver/storage continuation, and
@@ -41,8 +41,7 @@ restored RAM trials, physical capture tooling, image validation and receiver ana
 
 The next integration work is:
 
-1. Complete the fixed-padding write/readback/erase/restore trial with the original
-   protection state restored after each operation.
+1. Check stock startup after power removal following the restored padding trial.
 2. Back up the candidate stack's physical storage window and establish ownership
    of its RAM data/BSS before loading it.
 3. Bind one-phone SBC reception to the existing PCM buffer and USB adapters.

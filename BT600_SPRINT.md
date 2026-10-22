@@ -10,12 +10,16 @@ identifies a signed SDK 2M stack with the matching ROM UUID and a layout that fi
 before the current OTA header. Its real initializer passes isolated ARM replay.
 Read [RECEIVER_PORT.md](RECEIVER_PORT.md) for placement, RAM ownership and linkage.
 
-The first fixed-padding storage trial returned native completion but changed no
-bytes. All padding remained FF; two full post-trial application copies match the
-original hash. Read-only status measured SR1=0x34, SR2=0x02 and BP=5, explaining
-the protected target. The revised temporary-protection path passes offline checks
-and has not been run physically. Physical write/readback/restore, Bluetooth
-reception, persistent startup and Uconnect acceptance remain unfinished.
+The first fixed-padding storage trial changed no bytes because SR1=0x34,
+SR2=0x02 and BP=5 protected the target. The revised native temporary-protection
+path then **passed on the physical BT600**: exactly 32 bytes changed to the test
+pattern, readback matched, and all 4,096 original sector bytes were restored.
+SR1/SR2 matched the originals after both program and erase. All 24 native reads
+completed without errors, and callback/EP0/scratch/heap restoration passed.
+Two further full application copies retain the original SHA-256. Exact tested
+build and reports: `results/repo-checkpoint-20261022/verified-storage-build/` and
+`native-flash-restore-volatile.*`. Startup after physical power removal is pending.
+Bluetooth reception, persistent application startup and Uconnect acceptance remain.
 
 All 230 current offline tests pass with zero skips and libusb loading forbidden.
 The native host compiles with warnings as errors. Compact shareable results and

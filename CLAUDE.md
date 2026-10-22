@@ -3,12 +3,13 @@
 Five minutes of 48 kHz stereo USB PCM now pass with device-side IRQ refill,
 zero missing packets/bad samples, and verified restoration. Two complete native
 SPI reads preserve the actual application partition, and image CRC/SHA/RSA checks
-pass. The first bounded padding write returned completion but changed no bytes;
-read-only status found SR1=0x34/SR2=0x02/BP=5. Two post-trial full application
-reads still match the original. The temporary-unlock revision passes offline
-checks but has not run physically. Read BT600_SPRINT.md and RECEIVER_PORT.md before
-older next-step notes below. All 230 offline tests pass. Bluetooth receive,
-physical flash restoration and persistent startup remain unfinished.
+pass. Physical fixed-padding program/readback/erase/restoration now passes:
+exactly 32 changed bytes, all 4,096 original sector bytes restored, original
+SR1=0x34/SR2=0x02 after both operations, callback/heap restored. Two further full
+application copies match the original. A physical power-cycle check is pending.
+Read BT600_SPRINT.md and RECEIVER_PORT.md before older next-step notes below.
+All 230 published-tree offline tests pass. Bluetooth receive, persistent
+application startup and Uconnect acceptance remain unfinished.
 
 # Dart USB handoff
 

@@ -1,3 +1,21 @@
+# Physical storage restoration passed — 2026-10-22
+
+The committed volatile-protection build physically programmed the exact 32-byte
+pattern at SPI offset 0xde000, verified the whole sector, erased that 4 KiB sector
+and restored all 4,096 original bytes. SR1=0x34 and SR2=0x02 were verified after
+both program and erase. All 24 native reads completed with zero errors. Callback,
+EP0, selector, scratch, allocation and heap restored. Report success=true:
+results/repo-checkpoint-20261022/native-flash-restore-volatile.json.
+
+Two further complete application SPI copies match the original SHA-256
+f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673;
+1,152 completions, zero errors, full restoration. The 1,868-byte tested RAM build
+is preserved in verified-storage-build/ with SHA-256
+2960be154aa98b32f9089bfb09cbc4bbc0770e028bb46af6c087b7290df29671.
+No receiver code or startup image has been installed. Physical power-cycle check
+requested from the owner; finish the repo checkpoint while waiting, then verify
+stock startup and original storage/protection before candidate-window work.
+
 # Receiver and storage checkpoint — 2026-10-22
 
 The signed SDK 2M upper stack matches the CU ROM UUID and fits the blank window
