@@ -1,5 +1,22 @@
 # Hardware observations
 
+## Latest successful bench work — 2026-10-17
+
+Approved execution outside the command sandbox accesses the dongle directly.
+Current milestones, with their local JSON records:
+
+| Experiment | Result | Record suffix |
+| --- | --- | --- |
+| Live descriptor edit | iProduct 2 to 1 changed USB reply byte 15; RAM and reply restored | `101804.507832Z` |
+| Full flash-address-region read | All 2,097,152 bytes at `0x02000000`, no gaps | `101939.145845Z` |
+| Custom RAM execution | USB callback ran our marker trampoline and original handler; all words restored | `103719.627567Z` |
+| Resident flash read from RAM code | ROM `0x0000cbb5` returned status `0x18` and 16 expected bytes; all words restored | `104350.210104Z` |
+
+Records are `results/bt600-targets-20261017T<SUFFIX>.json`. Each successful
+experiment restored the original unconfigured USB state. The flash capture hash
+and exact RAM/code addresses are recorded at the top of SESSION_NOTES.md.
+The chronological observations below predate these results.
+
 ## Device and objective
 
 | Item | Value |
@@ -58,10 +75,83 @@ This gives an actual C-chip memory-read response at `0x00217e88`; the zero-fille
 
 The original local transcript is `results/bt600-20261016T052909.255079Z.txt`; results files are excluded from Git.
 
+## Capability map collected 2026-10-16
+
+| Capability | Opcode | Result |
+| --- | --- | --- |
+| Local version / ROM version | `0x1001` / `0xfc6d` | Works; ROM version 1 |
+| Memory read | `0xfc61` | Works over `0x00001000..0x0009f000` and RAM near `0x0021xxxx`; `0x0` reads zero; `0x000a0000` and `0x0880a0a8` hang the controller |
+| Firmware download | `0xfc20` | Accepted; the controller relaunches (running version `0x000e8761` -> `0x7bf15762`); the patch is relocated on load (its prologue is not in any readable region) |
+| Memory write | `0xfc62` | **Works.** Read/flip/verify/restore at `0x00210000`: `00 00 00 00` -> wrote `ff ff ff ff`, read back `ff ff ff ff`, restored `00 00 00 00` |
+
+So the controller exposes full RAM read and write plus a launching firmware-download path. The `0b05:1d70` USB identity is not in any readable region (searched in all byte orders), so it is config/efuse the read path cannot reach; but the firmware stages the descriptor in RAM at enumeration, which write access can reach in principle.
+
 ## Results still to collect
 
-- Version response after stock-patch upload.
-- RAM contents after the stock upload and bounded RAM mapping.
-- ROM/flash map, patch load address, and descriptor handling.
+- Where the firmware stages the USB device descriptor in RAM at enumeration (the write target for changing what the dongle presents as).
+- How the controller relocates a downloaded patch, and the real load base.
 - Which changes survive USB reconfiguration and complete power loss.
 - The car's supported USB/iPod protocol details needed for a working bridge.
+
+## Latest handoff evidence and completed targeted read
+
+The supplied 2026-10-16 Terminal record contains:
+
+| Query | Parameters | Return parameters |
+| --- | --- | --- |
+| `0x1001` Local Version | none | `00 0e 0e 00 0e 5d 00 61 87` |
+| `0xfc6d` ROM Version | none | `00 01` |
+| `0xfc61` ASUS READ_SEC_PROJ | `10 a4 ad 00 b0` | `00 00 00` |
+
+ASUS's loader uses the first data byte as key ID: zero here. This does not
+measure all boot/signing policy. USB class remained `e0/01/01`; original USB
+configuration was zero and the probe restored that unconfigured state.
+The original JSON is preserved locally under
+`results/handoff-2026-10-16/last_successful_probe.json`.
+
+The prepared `bt600_vendor_read.py --descriptor-targets` run was completed at 23:16 UTC; see the measured result below.
+It reads the firmware-derived pointer at `0x002c10b4`, conditionally follows it
+for an 18-byte template descriptor, and reads VID/PID settings at `0x002808b8`.
+It also captures standard GET_DESCRIPTOR for comparison. No new memory read,
+write, upload, or car result is claimed by offline tests.
+
+Evidence limits on earlier wording: not finding a prologue or VID/PID pattern
+in sampled memory does not prove relocation, or that identity is exclusively
+in efuse/config. The saved stock-upload transcript's obsolete `stock_running:
+false`/exit 3 reflects the fixed version-comparison bug; its raw acknowledgments
+and changed runtime version remain the observations. The failed
+`descriptor-20261016T095759.183191Z` run has no completed descriptor/RAM capture.
+
+
+### Direct Codex run — 2026-10-16 23:16:55 UTC (7:16 p.m. EDT)
+
+The sandboxed command saw zero devices and sent no HCI queries. Rerunning the
+same command through approved `require_escalated` execution succeeded. Normal
+Terminal is no longer required for this session's approved hardware access.
+No OS setting or driver attachment was changed.
+
+Command: `python3 bt600_vendor_read.py --descriptor-targets`.
+Result: `results/bt600-targets-20261016T231655.391813Z.json` (exit 0).
+Probe SHA-256: `d6678851838513d2c47c9c9b344ae9ed8d261acae12256c15d760514445b6cc0`.
+Identity replies matched the handoff: runtime `0x000e8761`, ROM 1, key ID zero.
+
+| Read | HCI return parameters | Interpretation |
+| --- | --- | --- |
+| `0x002c10b4` | `00 07 00 00 00` | Word `0x00000007`; invalid candidate pointer, not followed |
+| `0x002808b8` | `00 05 0b 70 1d` | Settings word contains VID/PID `0b05:1d70` |
+
+Standard device descriptor from EP0:
+
+```text
+12 01 10 01 e0 01 01 40 05 0b 70 1d 00 02 01 02 00 01
+```
+
+Decoded: USB version `0x0110`, Bluetooth class `e0/01/01`, EP0 packet size 64,
+device revision `0x0200`, manufacturer/product string indexes 1/2, no serial
+string, one configuration. Original USB configuration zero was restored.
+Exactly two memory words were read; no descriptor-pointer target was touched.
+
+The VID/PID settings location matches, while the candidate descriptor template
+location does not contain a usable pointer in this runtime. This is a layout
+mismatch to investigate, not a failure of RAM access or a verdict on USB
+repurposing. No memory write, firmware upload, reset, or car test was performed.

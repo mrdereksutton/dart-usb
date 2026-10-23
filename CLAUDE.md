@@ -1,54 +1,83 @@
+# Latest measured state — 2026-10-22
+
+Five minutes of 48 kHz stereo USB PCM now pass with device-side IRQ refill,
+zero missing packets/bad samples, and verified restoration. Two complete native
+SPI reads preserve the actual application partition, and image CRC/SHA/RSA checks
+pass. Physical fixed-padding program/readback/erase/restoration now passes:
+exactly 32 changed bytes, all 4,096 original sector bytes restored, original
+SR1=0x34/SR2=0x02 after both operations, callback/heap restored. Two further full
+application copies match the original. A physical power-cycle check is pending.
+Read BT600_SPRINT.md and RECEIVER_PORT.md before older next-step notes below.
+All 230 published-tree offline tests pass. Bluetooth receive, persistent
+application startup and Uconnect acceptance remain unfinished.
+
 # Dart USB handoff
 
-## Goal
+## Hardware resumed by the owner — 2026-10-19
 
-Use the existing ASUS USB-BT600 as a standalone wireless iPhone audio + track-metadata bridge to the USB/iPod input of a 2016 Dodge Dart's stock 8.4-inch Uconnect. The user is exploring repurposing this hardware; focus on that engineering task.
+The owner explicitly authorized resuming hardware and said to continue until it
+works. That supersedes the October 17 STOP. Read [HARDWARE_RESUME.md](HARDWARE_RESUME.md)
+for the working native IOUSBHost flow and the completed resident descriptor trial.
+Do not ask again to resume routine reversible hardware work. The legacy
+`USB_ACCESS_DISABLED` markers remain to block old libusb interface-claim paths
+that triggered macOS panics; do not remove them broadly or rerun those claims.
+Native HCI reads, checked pool-5 RAM allocation and the resident descriptor program
+have now passed on the physical BT600, with restoration verified. No persistent
+writes have been made. Continuous audio, Bluetooth receive and cold boot remain.
 
-## Communication
+## Goal and communication
 
-- Speak directly. Explain what an experiment does and what its output means.
-- Work through technical unknowns instead of using them as reasons to stall.
-- Do not repeatedly use "verified", "not verified", or "establish" in updates.
-- Do not substitute shopping recommendations for this project.
-- The user controls their Claude session. Do not launch or operate another assistant on their behalf unless asked.
+Repurpose the existing ASUS USB-BT600 into a standalone wireless iPhone audio
+and song-metadata receiver for the 2016 Dart's factory 8.4-inch Uconnect USB/iPod
+input. Continue useful engineering autonomously. Keep updates practical: what
+worked, what failed, and the next action. Avoid repetitive “does not establish,”
+“does not demonstrate,” and similar patronizing caveats. Do not substitute a
+shopping project or another host computer for this dongle project.
 
-## Current hardware
+## Current work
 
-ASUS USB-BT600, USB `0b05:1d70`, Realtek RTL8761CU, class `e0/01/01`. The user successfully ran the probe from macOS Terminal on 2026-10-16. HCI revision `0x000e`, manufacturer `0x005d`, LMP subversion `0x8761`, ROM version 1, patch chip ID 2. Read `HARDWARE.md` for the full response.
+The focused branch integrates Claude's development through `e549116` with the
+Codex probe work. Read FIRMWARE.md's **Current corrections** first, then the top
+of SESSION_NOTES.md. Older chronological claims are superseded where they conflict.
 
-The Codex app's process could read I/O Registry data but got IOKit `kIOReturnNotPermitted` when opening raw USB. The user's normal Terminal process opened and queried the dongle successfully. Use ordinary Terminal execution for hardware tests; do not change OS security settings.
+The completed CPU-memory capture and ROM/RAM files are under
+`results/flash-backup/`; inspect their manifest and hashes. These are local files.
+The file named “flash” includes RAM; do not treat it as a raw physical SPI image.
+A full device descriptor exists at `0x0030d18c`, with composite object
+`0x0030d180`, driver `0x0030d130`, and template `0x0030d110`. A reversible edit
+changed the actual USB reply. GET_DESCRIPTOR device index 1 reaches the live
+copy; this macOS setup returns cached data for index 0.
 
-Actual memory run at 05:29 UTC: `0xfc61` returned `b4 88 3b c2` at `0x00217e88`, while zero/four returned zeroes. Querying `0x0880a0a8` timed out and the dongle disappeared from USB before the stock upload. That address is removed. The runner now uploads stock first and stops on a failed phase. Read `HARDWARE.md` and the latest `results/` before changing the experiment; do not reintroduce the failed address as a flash dump target.
+Custom RAM code now runs through setup callback `0x020be8a1` at `D+0x34`.
+Both a marker trampoline and a call to ROM flash-read entry `0x0000cbb5` ran
+successfully, with all temporary RAM and configuration changes restored.
+A complete 2 MiB capture at `0x02000000` is saved with no gaps; its exact path,
+hash and test records are at the top of SESSION_NOTES.md. No dump is running.
+Next: native USB endpoint queues and a controlled PCM stream. The small
+freestanding packetizer/test tone in `firmware/` already compiles and passes tests.
 
-## Start with this task
+RAM reads/write-readback-restore, stock download, vendor register query, and the
+old descriptor-pointer experiment already ran. Do not repeat them merely to
+reconfirm access. Custom-patch marker tests yielded no marker; follow the loader
+and callback references instead of guessing more entry hooks.
 
-1. Read `bt600_probe.py`, `FIRMWARE.md`, `USB_BRIDGE.md`, and `rtl8761cu_patch_disassembly.txt`. `run_bt600_experiment.py` saves controller output under `results/`; inspect any existing results before repeating hardware work.
-2. Independently review the stock-patch parser, USB/HCI framing, fragment handling, and cleanup. The diagnostic and the RAM query at `0x00217e88` have answered on hardware. The stock upload still needs a completed hardware run.
-3. Investigate the patch's actual load address and calls to offsets outside the selected 252-byte payload. Determine how those targets relate to the chip's existing ROM/flash. The disassembly's base address is zero, not the controller's real load address.
-4. Propose and implement a small next experiment that moves toward C-chip memory access, flash access, and USB descriptor changes. Keep the user's observed ROM revision in the selection logic.
+Approved `require_escalated` execution can access USB directly from Codex. Use
+normal Terminal only if that path fails. Check for other running USB probes first.
+Do not read `0x0880a0a8`, `0x000a0000`, or the previously faulting bank samples.
+Stop a bounded probe on its first failed transfer. Keep complete results locally.
 
-The optional `--read-range START WORDS` reader is implemented and restricted to the candidate page `0x00217000..0x00217fff`, at most 256 aligned words. It stops on the first failed read and prints completed words as they arrive. Review the completed stock-upload result before running a wider read. A matching prologue is a candidate address, not proof of the CPU's execution mapping. The normal runner still reads just `0x00217e88`.
+No flash/efuse writes or full ASUS upgrade are authorized as routine experiments.
+Prepare a concrete reversible plan and recovery path before proposing any such
+step. RAM descriptor edits with saved originals and automatic restoration are
+within the user's existing authorization.
 
-## Concrete review outputs
+## References and validation
 
-- Put code findings and fixes in a focused commit, including a regression test for a reproducible failure.
-- Record C-chip address calculations, byte offsets, and source links in `FIRMWARE.md`. Separate inferred addresses from values read from the controller.
-- Inspect the stock image's unusually small payload: its second routine is cut off by the 252-byte selection and version replacement. Determine whether those bytes are an initializer, depend on resident code, or need another firmware revision. Do not blindly expand the upload into the zero padding.
-- Use `USB_BRIDGE.md` for the iAP/UAC1 interface reference. Determine how the C chip exposes EP0 descriptor callbacks and whether its isochronous IN endpoint can carry 192 bytes per millisecond.
-- End each work session with the changed files, test results, actual controller output collected, and the exact next experiment. A prepared repository or successful stock patch upload does not complete the audio bridge.
+Use USB_BRIDGE.md and the pinned IPOD_PROTOCOL.md for UAC1 streaming plus iAP/HID
+metadata/control. The physical iPod is currently unavailable; continue without it.
+ASUS full-image extraction is implemented in analyze_asus_firmware.py. The ARM
+C-chip differs from the MIPS B-chip; reuse methods, not B-chip machine code.
 
-## Important distinctions
-
-- RTL8761C uses a 32-bit ARMv8M Real-M300 core. The older RTL8761B research targets MIPS16e. Do not transplant B-chip code or memory addresses into the C chip.
-- Realtek's C datasheet shows ROM, RAM, and FLASH and documents UART flash-programming pins. That is a lead for persistence; the on-dongle programming path and usable flash layout remain to be mapped.
-- Stock HCI firmware upload is only a building block. The final bridge also needs Bluetooth audio/metadata handling and USB/iPod emulation.
-- Do not describe offline parser tests as successful hardware uploads.
-
-## Tests
-
-```bash
-python3 -m unittest -v
-python3 bt600_probe.py --inspect-stock
-```
-
-The README lists the hardware commands. No kernel driver, persistent firmware write, or OS configuration change has been performed in this project.
+Preserve earlier work. Commit focused changes, record actual hardware output and
+exact next experiments in SESSION_NOTES.md, and run relevant offline checks:
+`python3 -m unittest -v` and `python3 bt600_probe.py --inspect-stock`.

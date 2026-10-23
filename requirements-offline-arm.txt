@@ -1,0 +1,2 @@
+# Host-only ARM emulator; no USB library is installed by this requirements file.
+unicorn==2.1.4
