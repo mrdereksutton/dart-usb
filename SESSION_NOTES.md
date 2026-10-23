@@ -1,3 +1,25 @@
+# Cold startup and receiver-window backup passed — 2026-10-22
+
+After the owner's physical unplug/replug, read-only status again returned
+SR1=0x34, SR2=0x02, BP=5. Padding is unchanged and two complete native SPI
+application copies retain SHA-256 f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673.
+Reports: results/repo-checkpoint-20261022/native-cold-start-{status,application}.json.
+
+The signed receiver's complete 0x31000-byte storage window was then read twice
+through native SPI: 784 completions, zero errors, both copies entirely FF,
+SHA-256 eaac8f7843b93aeb514f3c83f9da3a7f5cdb98242c6bf52608bbef18b8071930.
+Callback, EP0, selector, scratch, allocation and heap restoration passed.
+The existing SPI reader now has a fixed read-only receiver-window build; it rejects
+page 392 onward and cannot be combined with the flash-restoration variant.
+
+Two live read-only copies of candidate RAM 0x00287400..0x002880af match,
+SHA-256 79cb852b46d8dd040d91b7561361baf11d3e43384584a56e70541d21610f7991.
+The installed system patch already references the same upper-stack variables and
+function addresses; its receiver callback slots are uninitialized. Mapped active
+heap and current patch/application startup data are outside the candidate range.
+No receiver initializer, image or startup hook has run on hardware yet. Next:
+bounded initializer trial with the original RAM saved and restored in the same call.
+
 # Physical storage restoration passed — 2026-10-22
 
 The committed volatile-protection build physically programmed the exact 32-byte

@@ -8,6 +8,13 @@ static const uint8_t ep0_descriptor[] = {7, 5, 0, 0, 64, 0, 0};
 
 #define ORIGINAL ((dart_rtl_setup_fn)(uintptr_t)0x020be8a1)
 #define SLOT (*(dart_rtl_setup_fn *)(uintptr_t)0x0030d164)
+#ifdef DART_RECEIVER_WINDOW_READ
+#define READ_BASE 0x02015000u
+#define READ_PAGES 392u
+#else
+#define READ_BASE 0x02097000u
+#define READ_PAGES 576u
+#endif
 
 static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
 
@@ -100,13 +107,13 @@ int dart_resident_setup(dart_rtl_gadget *gadget, const uint8_t *setup)
     }
     if (setup[1] != 6 || setup[2] != 0x7b) return ORIGINAL(gadget, setup);
     uint16_t page=le16(setup+4), requested=le16(setup+6);
-    if (setup[0]!=0x80 || setup[3]!=1 || page>=576 || !requested || requested>512 || dart_resident_busy) return -22;
+    if (setup[0]!=0x80 || setup[3]!=1 || page>=READ_PAGES || !requested || requested>512 || dart_resident_busy) return -22;
     size_t length=requested;
     dart_rtl_endpoint *endpoint = gadget->ep0;
     if ((uintptr_t)endpoint != 0x0030cbb4 || endpoint->descriptor ||
         (uintptr_t)endpoint->ops != 0x0030cf58 ||
         (uintptr_t)endpoint->ops->queue != 0x0020c7b1 || endpoint->max_packet != 64) return -22;
-    int status=((int (*)(uint32_t,void *,uint32_t))(uintptr_t)0x0000cbb5)(0x02097000u+(uint32_t)page*512u,data,(uint32_t)length);
+    int status=((int (*)(uint32_t,void *,uint32_t))(uintptr_t)0x0000cbb5)(READ_BASE+(uint32_t)page*512u,data,(uint32_t)length);
     if(status!=0x18) {dart_resident_errors++;return -5;}
     dart_rtl_request *request = &dart_resident_request;
     request->buffer = data; request->length = (uint32_t)length;

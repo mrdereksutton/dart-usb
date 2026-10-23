@@ -298,6 +298,7 @@ static void allocator_trial(IOUSBHostInterface *__strong *interfaceRef, IOUSBHos
 int main(int argc, const char **argv) { @autoreleasepool {
     BOOL flashMapRead=argc==4 && strcmp(argv[3],"--flash-map-read")==0;
     BOOL appRead=argc==4 && strcmp(argv[3],"--application-spi-read")==0;
+    BOOL receiverRead=argc==4 && strcmp(argv[3],"--receiver-window-read")==0;
     BOOL restoreTrial=argc==4 && strcmp(argv[3],"--flash-restore-trial")==0;
     BOOL flashStatus=argc==4 && strcmp(argv[3],"--flash-status")==0;
     BOOL bootContext=argc==4 && strcmp(argv[3],"--boot-context")==0;
@@ -307,21 +308,22 @@ int main(int argc, const char **argv) { @autoreleasepool {
     BOOL irqStream=argc==4 && strcmp(argv[3],"--stream-irq")==0;
     BOOL fullRate=irqStream || (argc==4 && strcmp(argv[3],"--stream-192")==0);
     BOOL streamTrial=fullRate || (argc==4 && strcmp(argv[3],"--stream-trial")==0);
-    BOOL resident=restoreTrial || flashStatus || appRead || streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
+    BOOL resident=restoreTrial || flashStatus || appRead || receiverRead || streamTrial || (argc==4 && strcmp(argv[3],"--resident-profile")==0);
     testIsoPolicy=argc==4 && strcmp(argv[3],"--iso-policy")==0;
     BOOL isoIdle=testIsoPolicy || (argc==4 && strcmp(argv[3],"--iso-idle")==0);
     signal(SIGINT,cancel_capture); signal(SIGTERM,cancel_capture);
     BOOL trial=resident || (argc==4 && strcmp(argv[3],"--allocator-trial")==0);
-    BOOL heapContext=argc==4 && strcmp(argv[3],"--heap-context")==0;
+    BOOL receiverContext=argc==4 && strcmp(argv[3],"--receiver-context")==0;
+    BOOL heapContext=receiverContext || (argc==4 && strcmp(argv[3],"--heap-context")==0);
     BOOL profileContext=argc==4 && strcmp(argv[3],"--profile-context")==0;
-    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext && !cpuContext && !bootContext && !flashMapRead) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--stream-192|--stream-irq|--iso-idle|--iso-policy|--heap-context|--profile-context|--reset-context|--cpu-context|--boot-context|--flash-map-read|--application-spi-read|--flash-status|--flash-restore-trial|--recover-stream PRIOR.json]\n"); return 2; }
+    if (argc != 3 && !trial && !heapContext && !profileContext && !isoIdle && !recovering && !resetContext && !cpuContext && !bootContext && !flashMapRead) { fprintf(stderr,"Usage: bt600-native-hci REPOSITORY REPORT.json [--allocator-trial|--resident-profile|--stream-trial|--stream-192|--stream-irq|--iso-idle|--iso-policy|--heap-context|--receiver-context|--profile-context|--reset-context|--cpu-context|--boot-context|--flash-map-read|--application-spi-read|--receiver-window-read|--flash-status|--flash-restore-trial|--recover-stream PRIOR.json]\n"); return 2; }
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     output = [NSString stringWithUTF8String:argv[2]];
     NSDictionary *approval = [NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"results/hardware-resume.json"]]
         options:0 error:nil];
     if (![approval[@"user_authorized_hardware"] boolValue] ||
-        ![approval[@"operations"] containsObject:(restoreTrial ? @"native_flash_restore_trial" : (bootContext || flashMapRead || flashStatus || appRead) ? @"native_boot_read" : resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
+        ![approval[@"operations"] containsObject:(restoreTrial ? @"native_flash_restore_trial" : (bootContext || flashMapRead || flashStatus || appRead || receiverRead) ? @"native_boot_read" : resetContext ? @"native_reenumeration" : recovering ? @"native_resident_stream" : streamTrial ? @"native_resident_stream" : isoIdle ? @"native_iso_capture" : resident ? @"native_resident_profile" :
             trial ? @"native_allocator_trial" : @"native_hci_read")]) return 3;
     if(fullRate && ![approval[@"operations"] containsObject:@"native_reenumeration"])return 3;
     if(irqStream && ![approval[@"operations"] containsObject:@"native_irq_stream"])return 3;
@@ -454,13 +456,30 @@ int main(int argc, const char **argv) { @autoreleasepool {
             }
             quiet=NO;
         }
+        if(receiverContext) {
+            quiet=YES;
+            NSMutableArray *passes=[NSMutableArray array];
+            record[@"receiver_ram_context"]=@{@"start":@0x00287400,@"bytes":@0xcb0,@"passes":passes,@"read_only":@YES};
+            for(unsigned pass=0;pass<2;pass++) {
+                NSMutableData *data=[NSMutableData data];
+                for(uint32_t at=0x00287400;at<0x002880b0;at+=4) {
+                    uint32_t word=read_word(interface,pipe,at);
+                    const uint8_t bytes[]={(uint8_t)word,(uint8_t)(word>>8),(uint8_t)(word>>16),(uint8_t)(word>>24)};
+                    [data appendBytes:bytes length:4];
+                }
+                NSString *path=[output.stringByDeletingPathExtension stringByAppendingFormat:@".pass%u.bin",pass+1];NSError *error=nil;
+                require([data writeToFile:path options:NSDataWritingAtomic error:&error],@"Save receiver RAM context",error);
+                [passes addObject:@{@"path":path,@"bytes":@(data.length)}];
+            }
+            quiet=NO;checkpoint(@"receiver RAM context saved twice");
+        }
         if(streamTrial) {
             iso_idle(device,configuration); record[@"iso_warmup"]=record[@"iso_capture"];
             [record removeObjectForKey:@"iso_capture"];
         }
         if (trial) { quiet=YES; allocator_trial(&interface,&pipe,root,fullRate ? 6144 : 4096,resident,^(uint32_t allocation) {
             if(restoreTrial || flashStatus)flash_restore_trial(interface,pipe,root,allocation,flashStatus);
-            else if(appRead)application_spi_read(interface,pipe,root,allocation);
+            else if(appRead || receiverRead)application_spi_read(interface,pipe,root,allocation,receiverRead);
             else if(fullRate)resident_stream192(&device,&interface,&pipe,root,allocation,irqStream);
             else if(streamTrial)resident_stream(device,interface,pipe,root,allocation);
             else resident_profile(interface,pipe,root,allocation);

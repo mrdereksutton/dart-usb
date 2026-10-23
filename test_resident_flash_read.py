@@ -50,4 +50,22 @@ class ResidentFlashReadTests(unittest.TestCase):
         self.assertEqual(m.word(s['dart_resident_busy']),0)
         self.assertEqual(m.word(s['dart_resident_errors']),1)
         self.assertEqual(m.word(0x30cbc8),0)
+    def test_receiver_window_first_last_and_exclusive_end(self):
+        with tempfile.TemporaryDirectory(prefix='bt600-receiver-export-') as folder:
+            self.manifest,self.objects=build(folder,receiver_window=True)
+            self.assertFalse(self.manifest['allows_flash_restore_trial'])
+            self.assertEqual((self.manifest['source_address'],self.manifest['partition_bytes'],self.manifest['pages']),(0x02015000,0x31000,392))
+            self.assertNotIn('dart_trial_attempted',self.manifest['symbols'])
+            m,s=self.model()
+            for page in (0,391):
+                self.assertEqual(self.request(m,s,page),0)
+                self.assertEqual(m.spi_calls[-1][::2],[0x02015000+page*512,512])
+                request=s['dart_resident_request'];self.assertEqual(bytes(m.machine.mem_read(m.word(request),512)),b'\xff'*512)
+                m.finish_control()
+            for page in (392,576,65535):self.assertEqual(self.request(m,s,page),-22)
+            self.assertEqual(len(m.spi_calls),2);self.assertEqual(m.word(s['dart_resident_errors']),0)
+    def test_receiver_window_cannot_include_restoration_entry_points(self):
+        with tempfile.TemporaryDirectory(prefix='bt600-invalid-export-') as folder:
+            with self.assertRaisesRegex(ValueError,'read-only'):build(folder,restore_trial=True,receiver_window=True)
+            self.assertEqual(list(Path(folder).iterdir()),[])
 if __name__=='__main__':unittest.main()

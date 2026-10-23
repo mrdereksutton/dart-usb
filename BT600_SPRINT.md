@@ -18,10 +18,14 @@ SR1/SR2 matched the originals after both program and erase. All 24 native reads
 completed without errors, and callback/EP0/scratch/heap restoration passed.
 Two further full application copies retain the original SHA-256. Exact tested
 build and reports: `results/repo-checkpoint-20261022/verified-storage-build/` and
-`native-flash-restore-volatile.*`. Startup after physical power removal is pending.
+`native-flash-restore-volatile.*`. After physical power removal, stock startup,
+original flash protection, unchanged padding and two complete application copies
+passed. The full receiver storage window also has two matching physical SPI
+backups: 200,704 bytes each, entirely FF, 784 completions and zero errors.
+Two read-only receiver RAM copies match; a bounded initializer trial is next.
 Bluetooth reception, persistent application startup and Uconnect acceptance remain.
 
-All 230 current offline tests pass with zero skips and libusb loading forbidden.
+All 232 current offline tests pass with zero skips and libusb loading forbidden.
 The native host compiles with warnings as errors. Compact shareable results and
 hashes are in [evidence/bt600-checkpoint-20261022.json](evidence/bt600-checkpoint-20261022.json);
 the full raw captures remain local.
@@ -197,7 +201,7 @@ remained 7624 bytes (`native-reset-context-forced-config.json`). The full-rate s
 
 ## Regression checks
 
-All 230 current offline tests pass with zero skips and an audit hook that rejects libusb
+All 232 current offline tests pass with zero skips and an audit hook that rejects libusb
 library loading. Native compilation uses warnings as errors.
 
 ## Reproduce the bounded capture

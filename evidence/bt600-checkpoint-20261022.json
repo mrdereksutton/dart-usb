@@ -85,7 +85,7 @@
     "loaded_on_hardware": false
   },
   "validation": {
-    "run": 230,
+    "run": 232,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
@@ -118,7 +118,7 @@
     "sr2_before_and_after": "0x02",
     "callback_restored": true,
     "allocator_restored": true,
-    "startup_after_power_removal_verified": false
+    "startup_after_power_removal_verified": true
   },
   "post_volatile_trial_application": {
     "success": true,
@@ -135,5 +135,55 @@
         "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
       }
     ]
+  },
+  "cold_start_stock_storage": {
+    "success": true,
+    "sr1": 52,
+    "sr2": 2,
+    "bp_level": 5,
+    "padding_restored": true,
+    "application_copies": [
+      {
+        "bytes": 294912,
+        "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
+      },
+      {
+        "bytes": 294912,
+        "sha256": "f0f0c06f2a8342365dbb96542970a87953deaf2e72d339f9c15fb768b85e3673"
+      }
+    ],
+    "application_native_completions": 1152,
+    "application_native_errors": 0,
+    "restored": true
+  },
+  "receiver_window_spi_backup": {
+    "cpu_address": "0x02015000",
+    "spi_offset": "0x15000",
+    "bytes": 200704,
+    "copies": [
+      {
+        "bytes": 200704,
+        "sha256": "eaac8f7843b93aeb514f3c83f9da3a7f5cdb98242c6bf52608bbef18b8071930"
+      },
+      {
+        "bytes": 200704,
+        "sha256": "eaac8f7843b93aeb514f3c83f9da3a7f5cdb98242c6bf52608bbef18b8071930"
+      }
+    ],
+    "all_ff": true,
+    "native_completions": 784,
+    "native_errors": 0,
+    "restored": true,
+    "success": true
+  },
+  "receiver_ram_context": {
+    "start": "0x00287400",
+    "bytes": 3248,
+    "matching_reads": true,
+    "sha256": "79cb852b46d8dd040d91b7561361baf11d3e43384584a56e70541d21610f7991",
+    "success": true,
+    "memory_writes": 0,
+    "system_patch_references_candidate_variables": true,
+    "initializer_trial_run": false
   }
 }

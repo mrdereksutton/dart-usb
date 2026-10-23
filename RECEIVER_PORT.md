@@ -1,9 +1,10 @@
 # Receiver port checkpoint — 2026-10-22
 
-The complete local suite passes 230 tests with zero failures/errors/skips and
+The complete local suite passes 232 tests with zero failures/errors/skips and
 libusb loads forbidden. The native host compiles with warnings as errors. The
 temporary-protection revision below has now passed the physical fixed-padding
-program/readback/erase/restore test. Startup after power removal is pending.
+program/readback/erase/restore test. After physical power removal, stock startup,
+protection and both complete application copies match the originals.
 
 The official SDK contains executable AVDTP/A2DP objects, not only declarations.
 Pinned references and SHA-256 records are in `results/receiver-references-20261020/`.
@@ -14,9 +15,11 @@ No reference Bluetooth code has been loaded on the BT600.
 The 4M upper-stack image overlaps the current OTA header and must not be installed
 at its linked address. The **2M image fits** at CPU `0x02015000..0x02045b57`,
 with 1,192 bytes before the existing OTA header at `0x02046000`. The saved CU CPU
-view is all FF across that candidate window. Physical SPI backup of that window
-is still required; only the current application partition has two verified raw
-backups so far.
+view is all FF across that candidate window. Two complete physical SPI reads of
+0x02015000..0x02045fff now match it: 200,704 bytes each, entirely FF, SHA-256
+`eaac8f7843b93aeb514f3c83f9da3a7f5cdb98242c6bf52608bbef18b8071930`.
+All 784 transfers completed with zero errors and full restoration. Reports:
+`results/receiver-references-20261020/native-receiver-window.*`.
 
 The candidate's chip ID is 0x0b, ROM UUID exactly matches the CU application and
 stack patch, and CRC16/SHA-256/RSA-PSS all verify under the same public key.
@@ -26,8 +29,12 @@ The parser now checks both using the PSS padding itself. The SDK package adds a
 
 Actual ARM replay of entry `0x02015401` returned 1, copied 404 data bytes from
 `0x020459c4` into `0x00287400`, and cleared 2,844 BSS bytes at `0x00287594`.
-Every write stayed within `0x00287400..0x002880af`. The saved CU bytes there are
-uninitialized-looking data; ownership must be checked before a live initializer.
+Every write stayed within `0x00287400..0x002880af`. Two live read-only copies
+of that RAM range match (SHA-256 `79cb852b46d8dd040d91b7561361baf11d3e43384584a56e70541d21610f7991`),
+and its receiver callback slots are uninitialized. The current system patch already
+references the same variables and candidate function addresses. The mapped active
+heaps and current patch/application startup data are outside that range. A live
+initializer trial must save and restore the original RAM in the same call.
 A linear instruction scan found no optional DSP instructions in this stack image;
 it includes literal pools and is a supporting check. The native USB build remains
 explicitly no-DSP/no-unaligned.
@@ -88,8 +95,9 @@ Its exact build is preserved in `verified-storage-build/` beside the report.
 `native-application-after-volatile.json` records two further complete raw SPI
 application copies, both retaining the original partition SHA-256, with 1,152
 completions and zero errors. No receiver image or startup hook has been installed.
-Verify startup after physical power removal, back up the candidate storage window
-and resolve its RAM ownership before loading the stack.
+The subsequent power-cycle check passed, and two complete physical backups of
+the receiver storage window are saved. Next is the bounded receiver initializer
+trial before any receiver image or startup hook installation.
 
 `--flash-status` only reads status and padding; `--flash-restore-trial` enables the
 fixed program/erase sequence and requires its separate local operation scope.
